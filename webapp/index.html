@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+  <meta name="format-detection" content="telephone=no">
+  <meta name="color-scheme" content="light dark">
+  <title>Буханка - меню</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Ctext y=%27.9em%27 font-size=%2790%27%3E%F0%9F%A5%90%3C/text%3E%3C/svg%3E">
+  <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <!-- Каталог -->
+    <main class="catalog" id="catalog">
+      <header class="hero">
+        <div class="hero__brand">
+          <div class="logo" aria-hidden="true">
+            <svg viewBox="0 0 32 32" width="22" height="22"><path fill="currentColor" d="M16 5c-6.6 0-12 3.6-12 9.5 0 2.3 1 3.7 2.3 4.6V25a2 2 0 0 0 2 2h15.4a2 2 0 0 0 2-2v-5.9c1.3-.9 2.3-2.3 2.3-4.6C28 8.6 22.6 5 16 5Zm-5.2 6.1c.4-.3 1-.2 1.4.2.4.5.3 1.1-.2 1.4l-2 1.5a1 1 0 0 1-1.2-1.6l2-1.5Zm6.4 0a1 1 0 0 1 .3 1.4l-1.6 2.3a1 1 0 1 1-1.6-1.1l1.5-2.3c.3-.5 1-.6 1.4-.3Zm5.2.3c.4.4.4 1 0 1.4l-1.9 2a1 1 0 0 1-1.4-1.4l1.9-2c.4-.4 1-.4 1.4 0Z"/></svg>
+          </div>
+          <div>
+            <h1 class="hero__title">Буханка</h1>
+            <p class="hero__sub">Пекарня - самовывоз ко времени</p>
+          </div>
+        </div>
+        <label class="search">
+          <svg class="search__icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="m20 20-4.2-4.2M18 11a7 7 0 1 1-14 0 7 7 0 0 1 14 0Z"/></svg>
+          <input id="search" type="search" placeholder="Круассан, латте, комбо..." autocomplete="off" enterkeyhint="search" aria-label="Поиск по меню">
+          <button class="search__clear" id="searchClear" type="button" aria-label="Очистить поиск" hidden>
+            <svg viewBox="0 0 24 24" width="16" height="16"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M7 7l10 10M17 7 7 17"/></svg>
+          </button>
+        </label>
+      </header>
+
+      <nav class="tabs" id="tabs" aria-label="Категории"></nav>
+
+      <div id="sections"></div>
+
+      <div class="empty" id="searchEmpty" hidden>
+        <div class="empty__icon" aria-hidden="true">🔍</div>
+        <p class="empty__title">Ничего не нашлось</p>
+        <p class="empty__text">Попробуйте другое слово, например "круассан" или "чай".</p>
+      </div>
+
+      <footer class="disclaimer">Концепт. Не является официальным сервисом пекарни Буханка</footer>
+    </main>
+
+    <!-- Экран товара -->
+    <section class="screen screen--product" id="productScreen" role="dialog" aria-modal="true" aria-labelledby="productTitle" hidden>
+      <div class="screen__scroll" id="productBody"></div>
+    </section>
+
+    <!-- Корзина -->
+    <section class="screen" id="cartScreen" role="dialog" aria-modal="true" aria-labelledby="cartTitle" hidden>
+      <div class="screen__scroll">
+        <header class="screen__head">
+          <button class="nav-back" type="button" data-back aria-label="Назад">
+            <svg viewBox="0 0 24 24" width="22" height="22"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M15 5l-7 7 7 7"/></svg>
+          </button>
+          <h2 class="screen__title" id="cartTitle">Корзина</h2>
+          <button class="link-btn" type="button" id="cartClear">Очистить</button>
+        </header>
+        <div id="cartBody"></div>
+      </div>
+    </section>
+
+    <!-- Оформление -->
+    <section class="screen" id="checkoutScreen" role="dialog" aria-modal="true" aria-labelledby="checkoutTitle" hidden>
+      <div class="screen__scroll">
+        <header class="screen__head">
+          <button class="nav-back" type="button" data-back aria-label="Назад">
+            <svg viewBox="0 0 24 24" width="22" height="22"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M15 5l-7 7 7 7"/></svg>
+          </button>
+          <h2 class="screen__title" id="checkoutTitle">Оформление</h2>
+          <span></span>
+        </header>
+        <form id="checkoutForm" novalidate>
+          <div class="group">
+            <label class="group__label" for="fieldName">Имя</label>
+            <div class="panel">
+              <input class="input" id="fieldName" name="name" type="text" maxlength="40" autocomplete="given-name" placeholder="Как к вам обращаться">
+            </div>
+            <p class="field-error" id="nameError" hidden>Укажите имя, чтобы мы знали, кому отдать заказ</p>
+          </div>
+
+          <div class="group">
+            <div class="group__label">Самовывоз ко времени</div>
+            <div class="slots" id="slots" role="radiogroup" aria-label="Время самовывоза"></div>
+            <p class="group__hint" id="slotsHint"></p>
+          </div>
+
+          <div class="group">
+            <label class="group__label" for="fieldComment">Комментарий</label>
+            <div class="panel">
+              <textarea class="input input--area" id="fieldComment" name="comment" rows="3" maxlength="200" placeholder="Например: без сахара, подогреть выпечку"></textarea>
+            </div>
+          </div>
+
+          <div class="group">
+            <div class="group__label">Ваш заказ</div>
+            <div class="panel" id="checkoutSummary"></div>
+            <p class="group__hint">Оплата при получении. После отправки бот пришлёт чек в чат.</p>
+          </div>
+        </form>
+        <footer class="disclaimer">Концепт. Не является официальным сервисом пекарни Буханка</footer>
+      </div>
+    </section>
+
+    <!-- Запасная кнопка вне Telegram (в Telegram её роль играет MainButton) -->
+    <div class="fallback-bar" id="fallbackBar" hidden>
+      <button class="fallback-bar__btn" id="fallbackBtn" type="button"></button>
+    </div>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  </div>
+
+  <script src="menu.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
