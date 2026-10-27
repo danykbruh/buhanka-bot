@@ -1,0 +1,12 @@
+# Контекст сборки образа бота - корень репозитория (bot/docker-compose.yml, context: ..)
+.git
+.github
+**/__pycache__
+**/*.pyc
+**/.env
+bot/.venv
+bot/venv
+bot/logs
+bot/data
+webapp/img
+*.md

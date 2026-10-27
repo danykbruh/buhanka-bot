@@ -1,0 +1,22 @@
+# Запуск: cd bot && docker compose up -d --build
+# Перед первым запуском: bot/.env с токеном и папки bot/logs, bot/data (см. README, "Деплой на VPS").
+services:
+  bot:
+    build:
+      context: ..
+      dockerfile: bot/Dockerfile
+    image: buhanka-bot
+    container_name: buhanka-bot
+    restart: unless-stopped
+    # Токен и настройки с хоста, в образ не попадают
+    env_file: .env
+    environment:
+      TZ: Europe/Moscow
+    volumes:
+      - ./logs:/app/bot/logs   # bot.log с ротацией
+      - ./data:/app/bot/data   # orders.db: номера заказов и антиспам
+    logging:
+      driver: json-file
+      options:
+        max-size: "1m"
+        max-file: "3"

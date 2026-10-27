@@ -5,6 +5,9 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+bot/logs/
+bot/data/
+*.log
 .vscode/
 .idea/
 .DS_Store

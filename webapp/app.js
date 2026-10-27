@@ -1,4 +1,4 @@
-(() => {
+(async () => {
   "use strict";
 
   // ---------- Telegram ----------
@@ -16,12 +16,40 @@
   };
 
   // ---------- Данные ----------
-  const { categories, items } = window.MENU;
-  const BAKERY = window.BAKERY;
+  // Меню, цены и лимиты лежат в menu.json: тот же файл читает бот и пересчитывает по нему заказ
+  async function loadMenu() {
+    try {
+      const res = await fetch("menu.json", { cache: "no-cache" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+      if (!Array.isArray(data.items) || !data.items.length) throw new Error("пустое меню");
+      return data;
+    } catch (err) {
+      console.error("Не удалось загрузить меню:", err);
+      document.getElementById("sections").innerHTML = `<div class="empty">
+        <div class="empty__icon" aria-hidden="true">🥐</div>
+        <p class="empty__title">Не удалось загрузить меню</p>
+        <p class="empty__text">Проверьте интернет и попробуйте ещё раз</p>
+        <button class="primary-btn" type="button" onclick="location.reload()">Повторить</button>
+      </div>`;
+      document.getElementById("tabs").hidden = true;
+      if (inTg) tg.ready();
+      return null;
+    }
+  }
+
+  const MENU = await loadMenu();
+  if (!MENU) return;
+  const { categories, items } = MENU;
+  const BAKERY = MENU.bakery;
+  const LIMITS = MENU.limits;
+  // Слоты самовывоза считаются по времени пекарни, а не устройства
+  const TZ_SHIFT = ((MENU.timezone && MENU.timezone.utcOffsetMinutes) || 0) * 60000;
   const byId = new Map(items.map((it) => [it.id, it]));
   const STORAGE_CART = "buhanka.cart.v1";
   const STORAGE_NAME = "buhanka.name.v1";
-  const MAX_QTY = 20;
+  const MAX_QTY = LIMITS.maxQty;
+  const MAX_LINES = LIMITS.maxLines;
 
   // ---------- Утилиты ----------
   const $ = (sel, root = document) => root.querySelector(sel);
@@ -76,7 +104,7 @@
   }
 
   // ---------- Вес, калорийность, состав комбо ----------
-  const ALLERGEN_ORDER = window.MENU.allergens || [];
+  const ALLERGEN_ORDER = MENU.allergens || [];
   const unitOf = (item) => (item.cat === "drinks" ? "мл" : "г");
   const sizeGroupOf = (item) => groupsOf(item).find((g) => g.id === "size");
 
@@ -132,7 +160,8 @@
       const raw = JSON.parse(store.get(STORAGE_CART) || "[]");
       return raw
         .filter((l) => byId.has(l.id) && optsValid(byId.get(l.id), l.opts || {}) && l.qty > 0)
-        .map((l) => ({ id: l.id, opts: l.opts || {}, qty: Math.min(MAX_QTY, l.qty | 0), key: lineKey(l.id, l.opts || {}) }));
+        .map((l) => ({ id: l.id, opts: l.opts || {}, qty: Math.min(MAX_QTY, l.qty | 0), key: lineKey(l.id, l.opts || {}) }))
+        .slice(0, MAX_LINES);
     } catch {
       return [];
     }
@@ -151,8 +180,13 @@
     const key = lineKey(id, opts);
     const line = cart.find((l) => l.key === key);
     if (line) line.qty = Math.min(MAX_QTY, line.qty + qty);
-    else cart.push({ id, opts: { ...opts }, qty: Math.min(MAX_QTY, qty), key });
+    else if (cart.length >= MAX_LINES) {
+      haptic.notify("warning");
+      toast(`В одном заказе не больше ${MAX_LINES} позиций`);
+      return false;
+    } else cart.push({ id, opts: { ...opts }, qty: Math.min(MAX_QTY, qty), key });
     cartChanged();
+    return true;
   }
 
   function changeLine(key, delta) {
@@ -655,7 +689,7 @@
         syncMainButton();
         return;
       }
-      addToCart(item.id, defaultOpts(item));
+      if (!addToCart(item.id, defaultOpts(item))) return;
       haptic.impact("light");
       $("[data-pair-qty]", pair).innerHTML = pairBadge(item);
       toast(`${item.title} - в корзине`);
@@ -693,7 +727,7 @@
       toast(`Выберите: ${missing.map((g) => g.title.toLowerCase().replace(/,.*$/, "")).join(", ")}`);
       return;
     }
-    addToCart(item.id, opts, qty);
+    if (!addToCart(item.id, opts, qty)) return;
     haptic.notify("success");
     back();
     toast(`${item.title} - в корзине`);
@@ -995,30 +1029,34 @@
     return m ? { open: m[1], close: m[2] } : BAKERY.hours;
   }
 
+  // Время пекарни хранится в Date со сдвигом на её часовой пояс и читается через getUTC*.
+  // Так слоты не зависят от часового пояса телефона и совпадают с проверкой в боте.
   function parseHM(hm, base) {
     const [h, m] = hm.split(":").map(Number);
     const d = new Date(base);
-    d.setHours(h, m, 0, 0);
+    d.setUTCHours(h, m, 0, 0);
     return d;
   }
 
   // Ближайшие слоты по 15 минут в часы работы. Если сегодня уже поздно - на завтра.
+  // Тот же алгоритм повторён в bot.py (build_slots), менять их нужно вместе.
   function buildSlots(now = new Date(), hours = currentHours()) {
     const step = BAKERY.slotStep * 60000;
+    const local = new Date(now.getTime() + TZ_SHIFT);
     const result = [];
     for (let dayOffset = 0; dayOffset < 2 && !result.length; dayOffset++) {
-      const day = new Date(now);
-      day.setDate(day.getDate() + dayOffset);
+      const day = new Date(local);
+      day.setUTCDate(day.getUTCDate() + dayOffset);
       const open = parseHM(hours.open, day);
       const last = new Date(parseHM(hours.close, day).getTime() - step);
-      let t = dayOffset === 0 ? new Date(Math.ceil((now.getTime() + BAKERY.prepMinutes * 60000) / step) * step) : open;
+      let t = dayOffset === 0 ? new Date(Math.ceil((local.getTime() + BAKERY.prepMinutes * 60000) / step) * step) : open;
       if (t < open) t = open;
       for (; t <= last && result.length < BAKERY.slotCount; t = new Date(t.getTime() + step)) {
         result.push({
-          date: `${t.getFullYear()}-${pad(t.getMonth() + 1)}-${pad(t.getDate())}`,
-          time: `${pad(t.getHours())}:${pad(t.getMinutes())}`,
+          date: `${t.getUTCFullYear()}-${pad(t.getUTCMonth() + 1)}-${pad(t.getUTCDate())}`,
+          time: `${pad(t.getUTCHours())}:${pad(t.getUTCMinutes())}`,
           day: dayOffset === 0 ? "сегодня" : "завтра",
-          ts: t.getTime(),
+          ts: t.getTime() - TZ_SHIFT, // настоящий момент времени
         });
       }
     }
@@ -1071,7 +1109,10 @@
     $("#nameError").hidden = true;
   });
 
+  let orderSent = false;
+
   function submitOrder() {
+    if (orderSent) return;
     if (!selectedBakery) {
       haptic.notify("error");
       openBakery();
@@ -1094,17 +1135,16 @@
       return;
     }
 
+    // Бот пересчитывает заказ по menu.json: шлём id, выбранные опции и цены, которые видел гость
     const order = {
-      v: 1,
-      items: cart.map((l) => {
-        const item = byId.get(l.id);
-        return { id: item.id, title: item.title, options: optsLabel(item, l.opts), qty: l.qty, price: unitPrice(item, l.opts) };
-      }),
+      v: 2,
+      menu: MENU.version,
+      items: cart.map((l) => ({ id: l.id, opts: l.opts, qty: l.qty, price: unitPrice(byId.get(l.id), l.opts) })),
       total: cartTotal(),
       pickup: { date: selectedSlot.date, time: selectedSlot.time },
       bakery: { id: selectedBakery.id, city: selectedBakery.city, address: selectedBakery.address },
-      name,
-      comment: els.comment.value.trim().slice(0, 200),
+      name: name.slice(0, LIMITS.nameMax),
+      comment: els.comment.value.trim().slice(0, LIMITS.commentMax),
     };
     const json = JSON.stringify(order);
     if (new TextEncoder().encode(json).length > 4096) {
@@ -1116,6 +1156,9 @@
     store.set(STORAGE_NAME, name);
 
     if (canSendData) {
+      if (orderSent) return; // защита от двойного нажатия, пока Telegram закрывает мини-апп
+      orderSent = true;
+      setMain("Отправляем...", null, false);
       haptic.notify("success");
       cart = [];
       saveCart();
@@ -1160,6 +1203,8 @@
   // ---------- Старт ----------
   function init() {
     document.documentElement.classList.toggle("in-tg", inTg);
+    els.name.maxLength = LIMITS.nameMax;
+    els.comment.maxLength = LIMITS.commentMax;
     renderTabs();
     renderSections();
 

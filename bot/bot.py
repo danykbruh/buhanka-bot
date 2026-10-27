@@ -2,54 +2,69 @@
 
 Настройки только из переменных окружения (или файла .env рядом с ботом):
     BOT_TOKEN      - токен от @BotFather
-    ADMIN_CHAT_ID  - чат, куда дублируются заказы (ваш user id или id группы)
+    ADMIN_CHAT_ID  - чат, куда дублируются заказы и ошибки (ваш user id или id группы)
     WEBAPP_URL     - https-адрес мини-аппа (например, GitHub Pages)
-    BAKERIES_FILE  - необязательно: путь к списку пекарен, по умолчанию ../webapp/bakeries.js
+Необязательные:
+    MENU_FILE      - меню, по умолчанию ../webapp/menu.json
+    BAKERIES_FILE  - пекарни, по умолчанию ../webapp/bakeries.js
+    LOG_DIR        - логи, по умолчанию bot/logs
+    DATA_DIR       - база заказов, по умолчанию bot/data
 """
 
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
-import re
 import sys
+import time
 from dataclasses import dataclass
-from datetime import date
+from datetime import datetime, timedelta, timezone
 from html import escape
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.filters import CommandStart
+from aiogram.exceptions import TelegramUnauthorizedError
+from aiogram.filters import Command, CommandStart, Filter
 from aiogram.types import ErrorEvent, KeyboardButton, Message, ReplyKeyboardMarkup, WebAppInfo
 from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).with_name(".env"))
+from order import (DEFAULT_BAKERIES_FILE, DEFAULT_MENU_FILE, Bakery, Menu, Order, OrderError,
+                   fingerprint, load_bakeries, load_menu, parse_order)
+from storage import Storage
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
+BOT_DIR = Path(__file__).resolve().parent
+load_dotenv(BOT_DIR / ".env")
+
 log = logging.getLogger("buhanka")
 
 MENU_BUTTON_TEXT = "🥐 Открыть меню"
 
-# Ограничения на входящие данные. Заказ приходит от клиента, поэтому проверяем всё.
-MAX_ITEMS = 50
-MAX_QTY = 99
-MAX_PRICE = 100_000
-TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
-DEFAULT_BAKERIES_FILE = Path(__file__).resolve().parent.parent / "webapp" / "bakeries.js"
-BAKERIES_ARRAY_RE = re.compile(r"window\.BAKERIES\s*=\s*(\[.*\])\s*;", re.DOTALL)
+# Антиспам
+RATE_LIMIT_ORDERS = 3
+RATE_LIMIT_WINDOW = 10 * 60   # секунд
+DUPLICATE_WINDOW = 30         # одинаковый заказ за это время считается двойным нажатием
+ERROR_NOTIFY_INTERVAL = 5 * 60
 
 
-# ---------- Конфиг ----------
+# ---------- Конфиг и логи ----------
 
 @dataclass(frozen=True)
 class Config:
     token: str
     admin_chat_id: int | None
     webapp_url: str
+    menu_file: Path
+    bakeries_file: Path
+    log_dir: Path
+    data_dir: Path
+
+
+def _path_env(name: str, default: Path) -> Path:
+    return Path(os.getenv(name, "").strip() or default)
 
 
 def load_config() -> Config:
@@ -72,136 +87,35 @@ def load_config() -> Config:
         try:
             admin_chat_id = int(admin_raw)
         except ValueError:
-            log.warning("ADMIN_CHAT_ID=%r не число - заказы не будут дублироваться админу", admin_raw)
+            log.warning("ADMIN_CHAT_ID=%r не число - заказы и ошибки не будут дублироваться админу", admin_raw)
     else:
-        log.warning("ADMIN_CHAT_ID не задан - заказы не будут дублироваться админу")
+        log.warning("ADMIN_CHAT_ID не задан - заказы и ошибки не будут дублироваться админу")
 
-    return Config(token=token, admin_chat_id=admin_chat_id, webapp_url=webapp_url)
-
-
-# ---------- Пекарни ----------
-
-@dataclass(frozen=True)
-class Bakery:
-    id: str
-    city: str
-    address: str
-
-
-def load_bakeries(path: Path) -> dict[str, Bakery]:
-    """Читает тот же список, что и мини-апп: JSON-массив внутри webapp/bakeries.js."""
-    match = BAKERIES_ARRAY_RE.search(path.read_text(encoding="utf-8"))
-    if not match:
-        raise ValueError(f"в {path} не найден массив window.BAKERIES")
-    bakeries = {}
-    for row in json.loads(match.group(1)):
-        bakeries[row["id"]] = Bakery(id=row["id"], city=row["city"], address=row["address"])
-    if not bakeries:
-        raise ValueError(f"в {path} пустой список пекарен")
-    return bakeries
-
-
-# ---------- Разбор заказа ----------
-
-class OrderError(ValueError):
-    """Данные из мини-аппа не похожи на заказ."""
-
-
-@dataclass(frozen=True)
-class OrderItem:
-    title: str
-    options: str
-    qty: int
-    price: int
-
-    @property
-    def sum(self) -> int:
-        return self.qty * self.price
-
-
-@dataclass(frozen=True)
-class Order:
-    items: list[OrderItem]
-    bakery: Bakery
-    pickup_date: date
-    pickup_time: str
-    name: str
-    comment: str
-    client_total: int | None
-
-    @property
-    def total(self) -> int:
-        return sum(i.sum for i in self.items)
-
-
-def _text(value: object, field: str, limit: int, required: bool = True) -> str:
-    if value is None and not required:
-        return ""
-    if not isinstance(value, str):
-        raise OrderError(f"{field}: ожидалась строка")
-    value = " ".join(value.split())[:limit]
-    if required and not value:
-        raise OrderError(f"{field}: пусто")
-    return value
-
-
-def _int(value: object, field: str, lo: int, hi: int) -> int:
-    # bool - подкласс int, отсекаем явно
-    if isinstance(value, bool) or not isinstance(value, int) or not lo <= value <= hi:
-        raise OrderError(f"{field}: ожидалось целое от {lo} до {hi}")
-    return value
-
-
-def parse_order(raw: str, bakeries: dict[str, Bakery]) -> Order:
-    try:
-        data = json.loads(raw)
-    except (json.JSONDecodeError, TypeError) as e:
-        raise OrderError("не JSON") from e
-    if not isinstance(data, dict):
-        raise OrderError("корень не объект")
-
-    raw_items = data.get("items")
-    if not isinstance(raw_items, list) or not 1 <= len(raw_items) <= MAX_ITEMS:
-        raise OrderError("items: пустой или слишком длинный список")
-
-    items = []
-    for n, it in enumerate(raw_items, 1):
-        if not isinstance(it, dict):
-            raise OrderError(f"items[{n}]: не объект")
-        items.append(OrderItem(
-            title=_text(it.get("title"), f"items[{n}].title", 80),
-            options=_text(it.get("options"), f"items[{n}].options", 160, required=False),
-            qty=_int(it.get("qty"), f"items[{n}].qty", 1, MAX_QTY),
-            price=_int(it.get("price"), f"items[{n}].price", 0, MAX_PRICE),
-        ))
-
-    # Адрес берём из своего списка по id, а не из присланных данных
-    raw_bakery = data.get("bakery")
-    bakery_id = raw_bakery.get("id") if isinstance(raw_bakery, dict) else None
-    if not isinstance(bakery_id, str) or bakery_id not in bakeries:
-        raise OrderError(f"bakery.id: неизвестная пекарня {bakery_id!r:.40}")
-
-    pickup = data.get("pickup")
-    if not isinstance(pickup, dict):
-        raise OrderError("pickup: не объект")
-    try:
-        pickup_date = date.fromisoformat(str(pickup.get("date")))
-    except ValueError as e:
-        raise OrderError("pickup.date: не дата") from e
-    pickup_time = str(pickup.get("time"))
-    if not TIME_RE.match(pickup_time):
-        raise OrderError("pickup.time: не ЧЧ:ММ")
-
-    total = data.get("total")
-    return Order(
-        items=items,
-        bakery=bakeries[bakery_id],
-        pickup_date=pickup_date,
-        pickup_time=pickup_time,
-        name=_text(data.get("name"), "name", 40),
-        comment=_text(data.get("comment"), "comment", 200, required=False),
-        client_total=total if isinstance(total, int) and not isinstance(total, bool) else None,
+    return Config(
+        token=token,
+        admin_chat_id=admin_chat_id,
+        webapp_url=webapp_url,
+        menu_file=_path_env("MENU_FILE", DEFAULT_MENU_FILE),
+        bakeries_file=_path_env("BAKERIES_FILE", DEFAULT_BAKERIES_FILE),
+        log_dir=_path_env("LOG_DIR", BOT_DIR / "logs"),
+        data_dir=_path_env("DATA_DIR", BOT_DIR / "data"),
     )
+
+
+def setup_logging(log_dir: Path | None) -> None:
+    """Логи в консоль и, если задана папка, в log_dir/bot.log: 5 файлов по 1 МБ."""
+    fmt = logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    root = logging.getLogger()
+    root.setLevel(logging.INFO)
+    root.handlers.clear()
+    console = logging.StreamHandler()
+    console.setFormatter(fmt)
+    root.addHandler(console)
+    if log_dir is not None:
+        log_dir.mkdir(parents=True, exist_ok=True)
+        file = RotatingFileHandler(log_dir / "bot.log", maxBytes=1_000_000, backupCount=4, encoding="utf-8")
+        file.setFormatter(fmt)
+        root.addHandler(file)
 
 
 # ---------- Тексты ----------
@@ -210,23 +124,23 @@ def money(n: int) -> str:
     return f"{n:,}".replace(",", " ") + " ₽"
 
 
-def pickup_label(order: Order, today: date) -> str:
-    delta = (order.pickup_date - today).days
-    day = {0: "сегодня", 1: "завтра"}.get(delta, order.pickup_date.strftime("%d.%m"))
-    return f"{day}, {order.pickup_time}"
+def pickup_label(order: Order, now: datetime) -> str:
+    delta = (order.pickup.date() - now.astimezone(order.pickup.tzinfo).date()).days
+    day = {0: "сегодня", 1: "завтра"}.get(delta, order.pickup.strftime("%d.%m"))
+    return f"{day}, {order.pickup:%H:%M}"
 
 
 def items_block(order: Order) -> str:
     lines = []
-    for i in order.items:
-        line = f"• {escape(i.title)} × {i.qty} - {money(i.sum)}"
-        if i.options:
-            line += f"\n   <i>{escape(i.options)}</i>"
-        lines.append(line)
+    for line in order.lines:
+        text = f"• {escape(line.title)} × {line.qty} - {money(line.sum)}"
+        if line.options:
+            text += f"\n   <i>{escape(line.options)}</i>"
+        lines.append(text)
     return "\n".join(lines)
 
 
-def receipt_text(order: Order, number: int) -> str:
+def receipt_text(order: Order, number: int, now: datetime) -> str:
     parts = [
         f"🧾 <b>Заказ №{number} принят</b>",
         "",
@@ -234,7 +148,7 @@ def receipt_text(order: Order, number: int) -> str:
         "",
         f"<b>Итого: {money(order.total)}</b>",
         f"📍 Где забрать: <b>{escape(order.bakery.address)}</b>",
-        f"🕒 Самовывоз: <b>{pickup_label(order, date.today())}</b>",
+        f"🕒 Самовывоз: <b>{pickup_label(order, now)}</b>",
         f"👤 Имя: {escape(order.name)}",
     ]
     if order.comment:
@@ -244,7 +158,7 @@ def receipt_text(order: Order, number: int) -> str:
     return "\n".join(parts)
 
 
-def admin_text(order: Order, number: int, message: Message) -> str:
+def admin_text(order: Order, number: int, message: Message, now: datetime) -> str:
     user = message.from_user
     who = escape(order.name)
     if user:
@@ -253,24 +167,89 @@ def admin_text(order: Order, number: int, message: Message) -> str:
     parts = [
         f"🔔 <b>Новый заказ №{number}</b>",
         f"📍 {escape(order.bakery.address)} <i>({escape(order.bakery.city)}, {escape(order.bakery.id)})</i>",
-        f"🕒 Самовывоз: <b>{pickup_label(order, date.today())}</b>",
+        f"🕒 Самовывоз: <b>{pickup_label(order, now)}</b>",
         f"👤 {who}",
         "",
         items_block(order),
         "",
         f"<b>Итого: {money(order.total)}</b>",
     ]
-    if order.client_total is not None and order.client_total != order.total:
-        parts.append(f"⚠️ Мини-апп прислал сумму {money(order.client_total)}, пересчитано по позициям")
     if order.comment:
         parts.append(f"💬 {escape(order.comment)}")
     return "\n".join(parts)
 
 
+def format_uptime(seconds: float) -> str:
+    minutes = int(seconds // 60)
+    days, minutes = divmod(minutes, 24 * 60)
+    hours, minutes = divmod(minutes, 60)
+    return (f"{days} д " if days else "") + f"{hours} ч {minutes} мин"
+
+
+# ---------- Защита от спама и шума ----------
+
+class DuplicateGuard:
+    """Помнит, какие заказы пришли за последние DUPLICATE_WINDOW секунд (двойное нажатие)."""
+
+    def __init__(self, window: float = DUPLICATE_WINDOW):
+        self.window = window
+        self.seen: dict[tuple[int, str], float] = {}
+
+    def is_duplicate(self, user_id: int, raw: str) -> bool:
+        now = time.monotonic()
+        self.seen = {k: t for k, t in self.seen.items() if now - t < self.window}
+        key = (user_id, fingerprint(raw))
+        if key in self.seen:
+            return True
+        self.seen[key] = now
+        return False
+
+
+class ErrorNotifier:
+    """Короткое сообщение админу об ошибке, не чаще раза в ERROR_NOTIFY_INTERVAL."""
+
+    def __init__(self, admin_chat_id: int | None, interval: float = ERROR_NOTIFY_INTERVAL):
+        self.admin_chat_id = admin_chat_id
+        self.interval = interval
+        self.last_sent = -interval
+        self.suppressed = 0
+        self.total = 0
+
+    async def notify(self, bot: Bot, error: BaseException) -> None:
+        self.total += 1
+        if self.admin_chat_id is None:
+            return
+        now = time.monotonic()
+        if now - self.last_sent < self.interval:
+            self.suppressed += 1
+            return
+        text = f"⚠️ Ошибка в боте: <code>{escape(type(error).__name__)}: {escape(str(error)[:200])}</code>"
+        if self.suppressed:
+            text += f"\nЕщё ошибок с прошлого сообщения: {self.suppressed}"
+        text += "\nПодробности в logs/bot.log"
+        try:
+            await bot.send_message(self.admin_chat_id, text)
+            self.last_sent, self.suppressed = now, 0
+        except Exception:
+            log.exception("Не удалось отправить админу сообщение об ошибке")
+
+
+class IsAdmin(Filter):
+    def __init__(self, admin_chat_id: int | None):
+        self.admin_chat_id = admin_chat_id
+
+    async def __call__(self, message: Message) -> bool:
+        if self.admin_chat_id is None:
+            return False
+        return message.chat.id == self.admin_chat_id or bool(message.from_user and message.from_user.id == self.admin_chat_id)
+
+
 # ---------- Хендлеры ----------
 
-def build_router(config: Config, bakeries: dict[str, Bakery]) -> Router:
+def build_router(config: Config, menu: Menu, bakeries: dict[str, Bakery], storage: Storage,
+                 notifier: ErrorNotifier, started_at: float) -> Router:
     router = Router()
+    duplicates = DuplicateGuard()
     keyboard = ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text=MENU_BUTTON_TEXT, web_app=WebAppInfo(url=config.webapp_url))]],
         resize_keyboard=True,
@@ -290,26 +269,56 @@ def build_router(config: Config, bakeries: dict[str, Bakery]) -> Router:
             reply_markup=keyboard,
         )
 
+    @router.message(Command("health"), IsAdmin(config.admin_chat_id))
+    async def health(message: Message) -> None:
+        now = datetime.now(menu.tz)
+        midnight = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        today_count, today_sum = storage.count_since(midnight.timestamp())
+        await message.answer(
+            "🩺 <b>Бот работает</b>\n"
+            f"Аптайм: {format_uptime(time.monotonic() - started_at)}\n"
+            f"Заказов сегодня: {today_count} на {money(today_sum)}\n"
+            f"Последний номер: {storage.last_number() or 'заказов ещё не было'}\n"
+            f"Меню: {len(menu.items)} позиций, версия {escape(menu.version)}\n"
+            f"Пекарен: {len(bakeries)}\n"
+            f"Ошибок с запуска: {notifier.total}"
+        )
+
     @router.message(F.web_app_data)
     async def web_app_order(message: Message, bot: Bot) -> None:
         raw = message.web_app_data.data
-        try:
-            order = parse_order(raw, bakeries)
-        except OrderError as e:
-            log.warning("Битый заказ от %s: %s; data=%.300r",
-                        message.from_user.id if message.from_user else "?", e, raw)
+        user_id = message.from_user.id if message.from_user else message.chat.id
+
+        if duplicates.is_duplicate(user_id, raw):
+            log.info("Повтор заказа от %s в течение %s с, пропускаю", user_id, DUPLICATE_WINDOW)
+            return
+
+        recent = storage.user_orders_since(user_id, time.time() - RATE_LIMIT_WINDOW)
+        if len(recent) >= RATE_LIMIT_ORDERS:
+            wait_min = max(1, round((recent[0] + RATE_LIMIT_WINDOW - time.time()) / 60))
+            log.warning("Лимит заказов для %s: %d за %d мин", user_id, len(recent), RATE_LIMIT_WINDOW // 60)
             await message.answer(
-                "😕 Не получилось прочитать заказ. Откройте меню ещё раз и попробуйте снова.",
+                f"🙏 Вы уже оформили {len(recent)} заказа за последние 10 минут. "
+                f"Новый можно будет отправить примерно через {wait_min} мин. Спасибо за понимание!",
                 reply_markup=keyboard,
             )
             return
 
-        number = message.message_id
-        await message.answer(receipt_text(order, number), reply_markup=keyboard)
+        now = datetime.now(timezone.utc)
+        try:
+            order = parse_order(raw, menu, bakeries, now)
+        except OrderError as e:
+            log.warning("Заказ от %s не принят: %s; data=%.300r", user_id, e, raw)
+            await message.answer(e.user_message, reply_markup=keyboard)
+            return
+
+        number = storage.add_order(user_id, order.total, order.bakery.id, raw)
+        log.info("Заказ №%s от %s на %s, %s", number, user_id, order.total, order.bakery.id)
+        await message.answer(receipt_text(order, number, now), reply_markup=keyboard)
 
         if config.admin_chat_id is not None:
             try:
-                await bot.send_message(config.admin_chat_id, admin_text(order, number, message))
+                await bot.send_message(config.admin_chat_id, admin_text(order, number, message, now))
             except Exception:
                 # Клиент уже получил чек, ошибка уведомления админа не должна это ломать
                 log.exception("Не удалось отправить заказ №%s админу %s", number, config.admin_chat_id)
@@ -324,30 +333,52 @@ def build_router(config: Config, bakeries: dict[str, Bakery]) -> Router:
 
 async def main() -> None:
     config = load_config()
-    bakeries_file = Path(os.getenv("BAKERIES_FILE", "").strip() or DEFAULT_BAKERIES_FILE)
+    setup_logging(config.log_dir)
     try:
-        bakeries = load_bakeries(bakeries_file)
-    except (OSError, ValueError, KeyError) as e:
-        sys.exit(f"Не удалось загрузить список пекарен ({bakeries_file}): {e}")
-    log.info("Пекарен в списке: %d", len(bakeries))
+        menu = load_menu(config.menu_file)
+        bakeries = load_bakeries(config.bakeries_file)
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        log.error("Не удалось загрузить меню или пекарни: %s", e)
+        sys.exit(1)
+    storage = Storage(config.data_dir / "orders.db")
+    log.info("Меню %s: %d позиций, пекарен: %d, последний заказ: %s",
+             menu.version, len(menu.items), len(bakeries), storage.last_number())
 
+    started_at = time.monotonic()
+    notifier = ErrorNotifier(config.admin_chat_id)
     bot = Bot(config.token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
-    dp.include_router(build_router(config, bakeries))
+    dp.include_router(build_router(config, menu, bakeries, storage, notifier, started_at))
 
     @dp.errors()
-    async def on_error(event: ErrorEvent) -> bool:
-        # Любая непредвиденная ошибка в хендлере логируется, бот продолжает работать
-        log.exception("Ошибка при обработке апдейта: %s", event.exception, exc_info=event.exception)
+    async def on_error(event: ErrorEvent, bot: Bot) -> bool:
+        # Любая ошибка в хендлере логируется, бот продолжает работать, админ получает короткое сообщение
+        log.error("Ошибка при обработке апдейта %s", event.update.update_id, exc_info=event.exception)
+        await notifier.notify(bot, event.exception)
+        message = event.update.message
+        if message is not None:
+            try:
+                await message.answer("😕 Что-то пошло не так. Попробуйте ещё раз чуть позже.")
+            except Exception:
+                log.exception("Не удалось ответить гостю после ошибки")
         return True
 
-    me = await bot.get_me()
-    log.info("Бот @%s запущен, мини-апп: %s", me.username, config.webapp_url)
-    await bot.delete_webhook(drop_pending_updates=False)
-    await dp.start_polling(bot)
+    try:
+        try:
+            me = await bot.get_me()
+        except TelegramUnauthorizedError:
+            log.error("Telegram не принял BOT_TOKEN: проверьте токен в .env (его выдаёт @BotFather)")
+            sys.exit(1)
+        log.info("Бот @%s запущен, мини-апп: %s", me.username, config.webapp_url)
+        await bot.delete_webhook(drop_pending_updates=False)
+        await dp.start_polling(bot)
+    finally:
+        storage.close()
+        await bot.session.close()
 
 
 if __name__ == "__main__":
+    setup_logging(None)  # до чтения конфига ошибки пишутся только в консоль
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
