@@ -30,11 +30,12 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramUnauthorizedError
 from aiogram.filters import Command, CommandStart, Filter
-from aiogram.types import (CallbackQuery, ErrorEvent, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton,
-                           Message, ReplyKeyboardMarkup, WebAppInfo)
+from aiogram.types import (BotCommand, CallbackQuery, ErrorEvent, FSInputFile, InlineKeyboardButton,
+                           InlineKeyboardMarkup, KeyboardButton, MenuButtonCommands, Message, ReplyKeyboardMarkup,
+                           WebAppInfo)
 from dotenv import load_dotenv
 
-from order import (DEFAULT_BAKERIES_FILE, DEFAULT_MENU_FILE, DEFAULT_PROMOS_FILE, Bakery, Menu, Order, OrderError,
+from order import (DEFAULT_BAKERIES_FILE, DEFAULT_MENU_FILE, DEFAULT_PROMOS_FILE, WEBAPP_DIR, Bakery, Menu, Order, OrderError,
                    Pricing, Promo, fingerprint, load_bakeries, load_menu, load_promos, parse_order, price_order)
 from storage import BonusState, Storage, StoredOrder
 
@@ -43,7 +44,30 @@ load_dotenv(BOT_DIR / ".env")
 
 log = logging.getLogger("buhanka")
 
-MENU_BUTTON_TEXT = "🥐 Открыть меню"
+MENU_BUTTON_TEXT = "Открыть меню"
+INPUT_PLACEHOLDER = "Нажмите кнопку ниже, чтобы заказать"
+
+# Приветствие на /start: обложка и подпись. Обложка лежит рядом с мини-аппом
+COVER_FILE = WEBAPP_DIR / "img" / "cover.png"
+WELCOME_CAPTION = (
+    "Горячая выпечка и кофе без очереди.\n"
+    "1. Откройте меню кнопкой внизу\n"
+    "2. Выберите позиции, пекарню и время\n"
+    "3. Заберите заказ, он будет готов\n"
+    "Концепт, не официальный сервис пекарни Буханка."
+)
+# Нижняя кнопка ставится отдельным сообщением: у сообщения с inline-кнопками не может быть второй клавиатуры
+WELCOME_KEYBOARD_TEXT = f"Кнопка «{MENU_BUTTON_TEXT}» внизу, под полем ввода."
+NAV_CALLBACK = "nav"
+
+# Профиль бота: команды, кнопка меню слева от поля ввода и описания
+BOT_COMMANDS = [("start", "Открыть меню"), ("orders", "Мои заказы"), ("bonus", "Мои штампы")]
+SHORT_DESCRIPTION = "Горячая выпечка и кофе к вашему времени. Концепт."
+DESCRIPTION = (
+    "Закажите горячую выпечку и кофе с самовывозом ко времени: меню, корзина и выбор пекарни прямо в Telegram.\n"
+    "Бот пришлёт чек, сообщит, когда заказ готов, и подарит каждый 6-й кофе.\n"
+    "Концепт, не официальный бот пекарни Буханка."
+)
 
 # Антиспам
 RATE_LIMIT_ORDERS = 3
@@ -399,23 +423,44 @@ def build_router(config: Config, menu: Menu, bakeries: dict[str, Bakery], storag
             keyboard=[[KeyboardButton(text=MENU_BUTTON_TEXT, web_app=WebAppInfo(url=url))]],
             resize_keyboard=True,
             is_persistent=True,
-            input_field_placeholder="Нажмите кнопку, чтобы открыть меню",
+            input_field_placeholder=INPUT_PLACEHOLDER,
         )
 
     def guest_id(message: Message) -> int:
         return message.from_user.id if message.from_user else message.chat.id
 
+    # Inline-кнопки под приветствием. Кнопки мини-аппа здесь нет: заказ через sendData доходит только из нижней
+    nav_keyboard = InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="Мои заказы", callback_data=f"{NAV_CALLBACK}:orders"),
+        InlineKeyboardButton(text="Мои штампы", callback_data=f"{NAV_CALLBACK}:bonus"),
+    ]])
+    cover = {"file_id": None}  # после первой отправки Telegram отдаёт file_id, дальше файл не загружаем заново
+
     @router.message(CommandStart())
     async def start(message: Message) -> None:
-        name = escape(message.from_user.first_name) if message.from_user else "друг"
-        await message.answer(
-            f"Привет, {name}! 👋\n\n"
-            "Это <b>Буханка</b> - горячая выпечка, кофе и завтраки с самовывозом ко времени.\n\n"
-            f"Нажмите <b>{MENU_BUTTON_TEXT}</b> внизу, соберите заказ и выберите, когда заберёте. "
-            "Чек придёт сюда, в чат.\n\n"
-            "<i>Концепт. Не является официальным сервисом пекарни Буханка.</i>",
-            reply_markup=keyboard_for(guest_id(message)),
-        )
+        sent = None
+        if cover["file_id"] or COVER_FILE.exists():
+            try:
+                sent = await message.answer_photo(cover["file_id"] or FSInputFile(COVER_FILE), caption=WELCOME_CAPTION,
+                                                  parse_mode=None, reply_markup=nav_keyboard)
+                cover["file_id"] = sent.photo[-1].file_id
+            except TelegramBadRequest as e:
+                log.warning("Не удалось отправить обложку: %s", e)
+                cover["file_id"] = None
+        if sent is None:  # обложки нет или Telegram её не принял - приветствие текстом
+            await message.answer(WELCOME_CAPTION, parse_mode=None, reply_markup=nav_keyboard)
+        await message.answer(WELCOME_KEYBOARD_TEXT, reply_markup=keyboard_for(guest_id(message)))
+
+    @router.callback_query(F.data.in_({f"{NAV_CALLBACK}:orders", f"{NAV_CALLBACK}:bonus"}))
+    async def nav(callback: CallbackQuery) -> None:
+        user_id = callback.from_user.id
+        if callback.data.endswith("orders"):
+            text = orders_text(storage.user_orders(user_id, 5), bakeries, menu.tz)
+        else:
+            text = bonus_text(storage.bonus_state(user_id, menu.stamps_per_reward))
+        await callback.answer()
+        if callback.message is not None:
+            await callback.message.answer(text, reply_markup=keyboard_for(user_id))
 
     @router.message(Command("health"), IsAdmin(config.admin_chat_id))
     async def health(message: Message) -> None:
@@ -556,6 +601,22 @@ def build_router(config: Config, menu: Menu, bakeries: dict[str, Bakery], storag
     return router
 
 
+async def setup_bot_profile(bot: Bot) -> None:
+    """Команды, кнопка меню и описания бота. Ошибка здесь не мешает принимать заказы."""
+    steps = [
+        ("команды", bot.set_my_commands([BotCommand(command=c, description=d) for c, d in BOT_COMMANDS])),
+        # Слева от поля ввода список команд, а не второй вход в мини-апп: из него заказ через sendData не уйдёт
+        ("кнопка меню", bot.set_chat_menu_button(menu_button=MenuButtonCommands())),
+        ("короткое описание", bot.set_my_short_description(short_description=SHORT_DESCRIPTION)),
+        ("описание", bot.set_my_description(description=DESCRIPTION)),
+    ]
+    for name, call in steps:
+        try:
+            await call
+        except Exception as e:
+            log.warning("Не удалось обновить %s бота: %s", name, e)
+
+
 async def main() -> None:
     config = load_config()
     setup_logging(config.log_dir)
@@ -597,6 +658,7 @@ async def main() -> None:
             log.error("Telegram не принял BOT_TOKEN: проверьте токен в .env (его выдаёт @BotFather)")
             sys.exit(1)
         log.info("Бот @%s запущен, мини-апп: %s", me.username, config.webapp_url)
+        await setup_bot_profile(bot)
         await bot.delete_webhook(drop_pending_updates=False)
         await dp.start_polling(bot)
     finally:

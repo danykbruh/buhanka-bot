@@ -15,6 +15,7 @@ RUN pip install -r bot/requirements.txt
 # Код бота и общие с мини-аппом данные. Токена в образе нет: .env подключается снаружи.
 COPY bot/*.py bot/promos.json bot/
 COPY webapp/menu.json webapp/bakeries.js webapp/
+COPY webapp/img/cover.png webapp/img/
 
 # Не от root. Папки logs и data монтируются с хоста, владелец на хосте должен быть uid 1000.
 RUN useradd --uid 1000 --create-home bot \

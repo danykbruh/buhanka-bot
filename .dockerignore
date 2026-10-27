@@ -8,5 +8,5 @@ bot/.venv
 bot/venv
 bot/logs
 bot/data
-webapp/img
+webapp/img/menu
 *.md
