@@ -75,6 +75,53 @@
     return groupsOf(item).every((g) => !g.required || choiceOf(g, opts[g.id]));
   }
 
+  // ---------- Вес, калорийность, состав комбо ----------
+  const ALLERGEN_ORDER = window.MENU.allergens || [];
+  const unitOf = (item) => (item.cat === "drinks" ? "мл" : "г");
+  const sizeGroupOf = (item) => groupsOf(item).find((g) => g.id === "size");
+
+  // Короткая строка на карточке в сетке
+  function cardLine(item) {
+    if (item.short) return item.short;
+    const size = sizeGroupOf(item);
+    if (size) return `${size.choices.map((c) => c.volume).join(" / ")} мл`;
+    return item.weight ? `${item.weight} ${unitOf(item)}` : "";
+  }
+
+  // Из чего состоит комбо при выбранных опциях (без невыбранных и "без пончика")
+  function partsOf(item, opts) {
+    return (item.parts || [])
+      .map((p) => {
+        const part = byId.get(p.group ? opts[p.group] : p.id);
+        if (!part) return null;
+        return {
+          item: part,
+          title: part.title + (p.note ? `, ${p.note}` : ""),
+          price: p.price ?? part.price,
+          kcal: p.kcal ?? part.kcal,
+          allergens: part.allergens || [],
+        };
+      })
+      .filter(Boolean);
+  }
+
+  // Объём/вес и ккал с учётом выбранного объёма. Для комбо ккал - сумма частей, пока выбрано всё обязательное
+  function statsOf(item, opts) {
+    if (item.parts) {
+      return { amount: "", kcal: optsValid(item, opts) ? partsOf(item, opts).reduce((s, p) => s + (p.kcal || 0), 0) : null };
+    }
+    const size = sizeGroupOf(item);
+    const choice = size && choiceOf(size, opts.size);
+    const amount = choice && choice.volume ? choice.volume : item.weight;
+    const kcal = item.kcal == null ? null : Math.round((item.kcal * amount) / item.weight / 5) * 5;
+    return { amount: amount ? `${amount} ${unitOf(item)}` : "", kcal };
+  }
+
+  function allergensOf(item, opts) {
+    const set = new Set(item.parts ? partsOf(item, opts).flatMap((p) => p.allergens) : item.allergens || []);
+    return ALLERGEN_ORDER.filter((a) => set.has(a));
+  }
+
   // ---------- Корзина ----------
   const lineKey = (id, opts) => id + "|" + Object.keys(opts).sort().map((k) => `${k}=${opts[k]}`).join("&");
 
@@ -148,6 +195,13 @@
     toast: $("#toast"),
     headerCart: $("#headerCart"),
     cartBadge: $("#cartBadge"),
+    bakery: $("#bakeryScreen"),
+    bakeryPick: $("#bakeryPick"),
+    bakeryHint: $("#bakeryHint"),
+    bakeryCities: $("#bakeryCities"),
+    bakerySearch: $("#bakerySearch"),
+    bakeryNear: $("#bakeryNear"),
+    bakeryList: $("#bakeryList"),
   };
 
   let query = "";
@@ -166,7 +220,7 @@
 
   function cardHtml(item) {
     const price = hasPriceRange(item) ? `<small>от</small>${money(minPrice(item))}` : money(item.price);
-    const meta = item.meta || (item.options ? item.options.map((g) => g.choices.map((c) => c.title).join(" / ")).join(", ") : "");
+    const meta = cardLine(item);
     return `<article class="card" data-id="${item.id}" tabindex="0" aria-label="${esc(item.title)}, ${esc(money(minPrice(item)))}">
       <div class="media">
         <img src="${imgSrc(item.id)}" alt="" loading="lazy" decoding="async" width="400" height="300">
@@ -192,7 +246,7 @@
   function renderSections() {
     const q = norm(query.trim());
     if (q) {
-      const found = items.filter((it) => norm(`${it.title} ${it.desc} ${it.meta || ""}`).includes(q));
+      const found = items.filter((it) => norm(`${it.title} ${it.desc} ${it.composition || ""} ${it.short || ""}`).includes(q));
       els.tabs.hidden = true;
       els.searchEmpty.hidden = found.length > 0;
       els.sections.innerHTML = found.length
@@ -335,7 +389,7 @@
   }, { passive: true });
 
   // ---------- Навигация между экранами ----------
-  const screens = { product: els.product, cart: els.cart, checkout: els.checkout };
+  const screens = { product: els.product, cart: els.cart, checkout: els.checkout, bakery: els.bakery };
   const stack = [];
   const top = () => stack[stack.length - 1] || "catalog";
 
@@ -396,8 +450,8 @@
       if (!text) { mb.hide(); return; }
       mb.setParams({
         text,
-        color: cssColor("--accent", "#B5562B"),
-        text_color: cssColor("--on-accent", "#FFFFFF"),
+        color: active ? cssColor("--accent", "#B5562B") : cssColor("--line", "#E8DCCB"),
+        text_color: active ? cssColor("--on-accent", "#FFFFFF") : cssColor("--hint", "#7A6656"),
         is_active: active,
         is_visible: true,
       });
@@ -426,7 +480,8 @@
         else setMain("");
         break;
       case "checkout":
-        if (cart.length) setMain(`Отправить заказ - ${money(total)}`, submitOrder);
+        // Без выбранной пекарни кнопка неактивна
+        if (cart.length) setMain(`Отправить заказ - ${money(total)}`, submitOrder, !!selectedBakery);
         else setMain("");
         break;
       default:
@@ -498,7 +553,7 @@
 
   function renderProduct() {
     const { item } = product;
-    const inCart = itemQty(item.id);
+    const pairs = (item.pairing || []).map((id) => byId.get(id)).filter(Boolean);
     els.productBody.innerHTML = `
       <div class="product__media">
         <img src="${imgSrc(item.id)}" alt="${esc(item.title)}" decoding="async" width="800" height="600">
@@ -506,9 +561,15 @@
       </div>
       <div class="product__content">
         <h2 class="product__title" id="productTitle">${esc(item.title)}</h2>
-        ${item.meta || inCart ? `<p class="product__meta">${esc(item.meta || "")}${item.meta && inCart ? " - " : ""}${inCart ? `в корзине: ${inCart}` : ""}</p>` : ""}
+        <p class="product__stats" id="productStats"></p>
         <p class="product__desc">${esc(item.desc)}</p>
         ${groupsOf(item).map(optionGroupHtml).join("")}
+        <div id="productParts"></div>
+        ${item.composition ? `<div class="product__block">
+          <h3 class="product__block-title">Состав</h3>
+          <p class="product__composition">${esc(item.composition)}</p>
+          <div id="productAllergens"></div>
+        </div>` : ""}
         <div class="product__qty">
           <div>
             <div class="product__total-label">Сумма</div>
@@ -520,17 +581,86 @@
             <button type="button" data-step="1" aria-label="Больше">${ICON.plus}</button>
           </div>
         </div>
-      </div>`;
+      </div>
+      ${pairs.length ? `<div class="pairing">
+        <h3 class="product__block-title pairing__title">С этим берут</h3>
+        <div class="pairing__list">${pairs.map(pairHtml).join("")}</div>
+      </div>` : ""}
+      <p class="product__note">Состав и КБЖУ ориентировочные</p>`;
+    renderProductDetails();
+  }
+
+  function pairHtml(item) {
+    return `<button type="button" class="pair" data-pair="${item.id}" aria-label="Добавить в корзину: ${esc(item.title)}">
+      <span class="pair__media"><img src="${imgSrc(item.id)}" alt="" loading="lazy" decoding="async" width="200" height="150"></span>
+      <span class="pair__title">${esc(item.title)}</span>
+      <span class="pair__foot">
+        <span class="pair__price">${money(minPrice(item))}</span>
+        <span class="pair__add" data-pair-qty>${pairBadge(item)}</span>
+      </span>
+    </button>`;
+  }
+
+  const pairBadge = (item) => (itemQty(item.id) ? `<b>${itemQty(item.id)}</b>` : ICON.plus);
+
+  // Части экрана товара, которые зависят от выбранных опций
+  function renderProductDetails() {
+    const { item, opts } = product;
+    const { amount, kcal } = statsOf(item, opts);
+    const inCart = itemQty(item.id);
+    const stats = [amount, kcal != null ? `${kcal} ккал` : ""].filter(Boolean).join(" · ");
+    $("#productStats").innerHTML = `${esc(stats)}${inCart ? `<span class="product__incart">в корзине: ${inCart}</span>` : ""}`;
+    $("#productStats").hidden = !stats && !inCart;
+
+    const allergensEl = $("#productAllergens");
+    if (allergensEl) {
+      const list = allergensOf(item, opts);
+      allergensEl.innerHTML = list.length
+        ? `<div class="allergens"><span class="allergens__label">Аллергены</span>${list.map((a) => `<span class="allergen">${esc(a)}</span>`).join("")}</div>`
+        : "";
+    }
+
+    const partsEl = $("#productParts");
+    if (!item.parts) { partsEl.innerHTML = ""; return; }
+    const parts = partsOf(item, opts);
+    const complete = optsValid(item, opts);
+    const separately = parts.reduce((s, p) => s + p.price, 0);
+    const save = separately - unitPrice(item, opts);
+    partsEl.innerHTML = `<div class="combo">
+      <h3 class="product__block-title">В наборе</h3>
+      ${parts.map((p) => `<div class="combo__row"><span>${esc(p.title)}</span><span class="combo__price">${money(p.price)}</span></div>`).join("")}
+      ${complete && save > 0
+        ? `<div class="combo__sum"><span>Отдельно <s>${money(separately)}</s>, в комбо ${money(unitPrice(item, opts))}</span><span class="combo__save">Экономия ${money(save)}</span></div>`
+        : `<div class="combo__sum combo__sum--hint">Выберите состав, и мы посчитаем выгоду</div>`}
+    </div>`;
   }
 
   function updateProductTotals() {
     $("#productTotal").textContent = money(productTotal());
     $("#productQty").textContent = product.qty;
+    renderProductDetails();
     syncMainButton();
   }
 
   els.productBody.addEventListener("click", (e) => {
     if (!product) return;
+    const pair = e.target.closest("[data-pair]");
+    if (pair) {
+      const item = byId.get(pair.dataset.pair);
+      if (needsChoice(item)) {
+        // Без выбора опций добавить нельзя: показываем этот товар на том же экране
+        product = { item, opts: defaultOpts(item), qty: 1 };
+        renderProduct();
+        els.productBody.scrollTo({ top: 0, behavior: "smooth" });
+        syncMainButton();
+        return;
+      }
+      addToCart(item.id, defaultOpts(item));
+      haptic.impact("light");
+      $("[data-pair-qty]", pair).innerHTML = pairBadge(item);
+      toast(`${item.title} - в корзине`);
+      return;
+    }
     const choice = e.target.closest("[data-choice]");
     if (choice) {
       const groupEl = choice.closest("[data-group]");
@@ -609,6 +739,10 @@
           </div>`;
         }).join("")}
       </div>
+      <div class="cart-bakery">
+        <div class="group__label">Где заберёте</div>
+        <button type="button" class="panel bakery-pick${selectedBakery ? "" : " is-empty"}" data-pick-bakery>${bakeryPickHtml()}</button>
+      </div>
       <div class="totals">
         <div class="totals__row totals__row--muted"><span>Позиций</span><span>${cartCount()} шт</span></div>
         <div class="totals__row totals__row--muted"><span>Самовывоз</span><span>бесплатно</span></div>
@@ -634,9 +768,232 @@
     else if (window.confirm("Очистить корзину?")) doClear();
   });
 
+  // ---------- Пекарни ----------
+  const BAKERIES = window.BAKERIES || [];
+  const bakeryById = new Map(BAKERIES.map((b) => [b.id, b]));
+  const STORAGE_BAKERY = "buhanka.bakery.v1";
+  const bakeryCities = Object.entries(BAKERIES.reduce((m, b) => ((m[b.city] = (m[b.city] || 0) + 1), m), {}))
+    .sort((a, b) => b[1] - a[1])
+    .map(([city, count]) => ({ city, count }));
+
+  let selectedBakery = bakeryById.get(store.get(STORAGE_BAKERY)) || null;
+  let bakeryCity = selectedBakery ? selectedBakery.city : (bakeryCities[0] || {}).city;
+  let bakeryQuery = "";
+  let userPos = null; // { lat, lng } после "Ближайшая ко мне"
+
+  const ICON_PIN = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linejoin="round" d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21Z"/><circle cx="12" cy="9.5" r="2.5" fill="none" stroke="currentColor" stroke-width="1.9"/></svg>';
+  const ICON_CHECK = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round" d="m5 12.5 4.5 4.5L19 7.5"/></svg>';
+  const ICON_CHEVRON = '<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="m9 5 7 7-7 7"/></svg>';
+
+  // Адрес без города и административных округов: в списке город и так выбран
+  function shortAddress(b) {
+    const parts = b.address.split(",").map((s) => s.trim())
+      .filter((p) => !/^(Москва|Санкт-Петербург|Московская обл(асть|\.))$/.test(p))
+      .filter((p) => !/административный округ|городской округ| район$/.test(p));
+    return parts.join(", ") || b.address;
+  }
+
+  function distanceKm(a, b) {
+    const rad = (d) => (d * Math.PI) / 180;
+    const dLat = rad(b.lat - a.lat);
+    const dLng = rad(b.lng - a.lng);
+    const h = Math.sin(dLat / 2) ** 2 + Math.cos(rad(a.lat)) * Math.cos(rad(b.lat)) * Math.sin(dLng / 2) ** 2;
+    return 6371 * 2 * Math.asin(Math.sqrt(h));
+  }
+
+  function formatDistance(km) {
+    if (km < 1) return `${Math.max(10, Math.round((km * 1000) / 10) * 10)} м`;
+    if (km < 10) return `${km.toFixed(1).replace(".", ",")} км`;
+    return `${Math.round(km)} км`;
+  }
+
+  const bakeryDistance = (b) => (userPos ? formatDistance(distanceKm(userPos, b)) : "");
+
+  function bakerySub(b, withCity) {
+    return [withCity || bakeryCities.length > 1 ? b.city : "", b.metro ? `м. ${b.metro}` : "", b.hours || ""]
+      .filter(Boolean).join(" · ");
+  }
+
+  // Плашка "Где заберёте" для корзины и оформления
+  function bakeryPickHtml() {
+    if (!selectedBakery) {
+      return `<span class="bakery-pick__icon">${ICON_PIN}</span>
+        <span class="bakery-pick__text">
+          <span class="bakery-pick__addr">Выберите пекарню</span>
+          <span class="bakery-pick__sub">${BAKERIES.length} пекарен, есть поиск и ближайшая к вам</span>
+        </span>
+        <span class="bakery-pick__go">${ICON_CHEVRON}</span>`;
+    }
+    const sub = [bakerySub(selectedBakery), bakeryDistance(selectedBakery)].filter(Boolean).join(" · ");
+    return `<span class="bakery-pick__icon is-set">${ICON_PIN}</span>
+      <span class="bakery-pick__text">
+        <span class="bakery-pick__addr">${esc(shortAddress(selectedBakery))}</span>
+        ${sub ? `<span class="bakery-pick__sub">${esc(sub)}</span>` : ""}
+      </span>
+      <span class="bakery-pick__action">Изменить</span>`;
+  }
+
+  function renderBakeryPick() {
+    els.bakeryPick.innerHTML = bakeryPickHtml();
+    els.bakeryPick.classList.toggle("is-empty", !selectedBakery);
+    els.bakeryHint.hidden = !!selectedBakery;
+  }
+
+  function openBakery() {
+    els.bakerySearch.value = bakeryQuery;
+    renderBakeryCities();
+    renderBakeryList();
+    open("bakery");
+  }
+
+  function renderBakeryCities() {
+    els.bakeryCities.hidden = bakeryCities.length < 2;
+    els.bakeryCities.innerHTML = bakeryCities
+      .map(({ city, count }) => `<button type="button" class="city" role="radio" data-city="${esc(city)}" aria-checked="${city === bakeryCity}">
+        ${esc(city)} <small>${count}</small>
+      </button>`)
+      .join("");
+  }
+
+  function renderBakeryList() {
+    const q = norm(bakeryQuery.trim());
+    // С запросом ищем по всем городам: гость мог не переключить город
+    let list = BAKERIES.filter((b) => (q ? norm(`${b.address} ${b.metro || ""}`).includes(q) : b.city === bakeryCity));
+    list = userPos
+      ? list.map((b) => [b, distanceKm(userPos, b)]).sort((a, b) => a[1] - b[1]).map(([b]) => b)
+      : list.sort((a, b) => shortAddress(a).localeCompare(shortAddress(b), "ru"));
+    els.bakeryList.innerHTML = list.length
+      ? list.map((b) => {
+          const sub = bakerySub(b, !!q);
+          const dist = bakeryDistance(b);
+          const on = selectedBakery && selectedBakery.id === b.id;
+          return `<button type="button" class="bakery-row" role="radio" data-bakery="${b.id}" aria-checked="${!!on}">
+            <span class="bakery-row__pin">${on ? ICON_CHECK : ICON_PIN}</span>
+            <span class="bakery-row__text">
+              <span class="bakery-row__addr">${esc(shortAddress(b))}</span>
+              ${sub ? `<span class="bakery-row__sub">${esc(sub)}</span>` : ""}
+            </span>
+            ${dist ? `<span class="bakery-row__dist">${dist}</span>` : ""}
+          </button>`;
+        }).join("")
+      : `<div class="empty empty--sm"><p class="empty__title">Не нашли такой адрес</p><p class="empty__text">Попробуйте название улицы без "ул." или номер дома</p></div>`;
+  }
+
+  function selectBakery(b) {
+    selectedBakery = b;
+    bakeryCity = b.city;
+    store.set(STORAGE_BAKERY, b.id);
+    if (tgAtLeast("6.9")) {
+      try { tg.CloudStorage.setItem(STORAGE_BAKERY, b.id); } catch { /* нет CloudStorage */ }
+    }
+    bakeryChanged();
+  }
+
+  function bakeryChanged() {
+    renderBakeryPick();
+    if (stack.includes("checkout")) renderSlots();
+    if (stack.includes("cart")) renderCart();
+    syncMainButton();
+  }
+
+  // Геолокация: Telegram LocationManager (Bot API 8.0+), иначе браузерная
+  function locate() {
+    return new Promise((resolve, reject) => {
+      const viaBrowser = () => {
+        if (!navigator.geolocation) return reject("unsupported");
+        navigator.geolocation.getCurrentPosition(
+          (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+          (err) => reject(err.code === 1 ? "denied" : "unavailable"),
+          { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 },
+        );
+      };
+      const lm = tgAtLeast("8.0") ? tg.LocationManager : null;
+      if (!lm) return viaBrowser();
+      const go = () => {
+        if (!lm.isLocationAvailable) return viaBrowser();
+        lm.getLocation((loc) => {
+          if (loc) resolve({ lat: loc.latitude, lng: loc.longitude });
+          else reject(lm.isAccessRequested && !lm.isAccessGranted ? "denied-tg" : "unavailable");
+        });
+      };
+      if (lm.isInited) go();
+      else lm.init(go);
+    });
+  }
+
+  async function findNearest() {
+    const btn = els.bakeryNear;
+    if (btn.getAttribute("aria-busy") === "true") return;
+    btn.setAttribute("aria-busy", "true");
+    $("span", btn).textContent = "Определяем...";
+    haptic.impact("light");
+    try {
+      userPos = await locate();
+      const nearest = BAKERIES.reduce((best, b) => (!best || distanceKm(userPos, b) < distanceKm(userPos, best) ? b : best), null);
+      if (nearest) bakeryCity = nearest.city;
+      bakeryQuery = "";
+      els.bakerySearch.value = "";
+      renderBakeryCities();
+      renderBakeryList();
+      if (selectedBakery) renderBakeryPick();
+      $("#bakeryScroll").scrollTo({ top: 0, behavior: "smooth" });
+      haptic.notify("success");
+      if (nearest) toast(`Ближайшая: ${shortAddress(nearest)}, ${bakeryDistance(nearest)}`);
+    } catch (reason) {
+      haptic.notify("error");
+      if (reason === "denied-tg") {
+        tg.showConfirm("Доступ к геолокации для мини-аппа выключен. Открыть настройки?", (ok) => {
+          if (ok) tg.LocationManager.openSettings();
+        });
+      } else if (reason === "denied") {
+        toast("Нет доступа к геолокации. Разрешите его в настройках");
+      } else {
+        toast("Не удалось определить местоположение");
+      }
+    } finally {
+      btn.removeAttribute("aria-busy");
+      $("span", btn).textContent = "Ближайшая ко мне";
+    }
+  }
+
+  els.bakeryCities.addEventListener("click", (e) => {
+    const b = e.target.closest("[data-city]");
+    if (!b || b.dataset.city === bakeryCity) return;
+    bakeryCity = b.dataset.city;
+    bakeryQuery = "";
+    els.bakerySearch.value = "";
+    haptic.select();
+    renderBakeryCities();
+    renderBakeryList();
+  });
+
+  els.bakerySearch.addEventListener("input", () => {
+    bakeryQuery = els.bakerySearch.value;
+    renderBakeryList();
+  });
+  els.bakerySearch.addEventListener("keydown", (e) => { if (e.key === "Enter") els.bakerySearch.blur(); });
+  els.bakeryNear.addEventListener("click", findNearest);
+
+  els.bakeryList.addEventListener("click", (e) => {
+    const row = e.target.closest("[data-bakery]");
+    if (!row) return;
+    selectBakery(bakeryById.get(row.dataset.bakery));
+    haptic.select();
+    renderBakeryList();
+    setTimeout(() => { if (top() === "bakery") back(); }, 160);
+  });
+
+  document.addEventListener("click", (e) => { if (e.target.closest("[data-pick-bakery]")) openBakery(); });
+
   // ---------- Оформление ----------
   let slots = [];
   let selectedSlot = null;
+
+  // Часы выбранной пекарни ("08:00-22:00"), если они есть в данных, иначе общие
+  function currentHours() {
+    const m = selectedBakery && /^(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})$/.exec(selectedBakery.hours || "");
+    return m ? { open: m[1], close: m[2] } : BAKERY.hours;
+  }
 
   function parseHM(hm, base) {
     const [h, m] = hm.split(":").map(Number);
@@ -646,14 +1003,14 @@
   }
 
   // Ближайшие слоты по 15 минут в часы работы. Если сегодня уже поздно - на завтра.
-  function buildSlots(now = new Date()) {
+  function buildSlots(now = new Date(), hours = currentHours()) {
     const step = BAKERY.slotStep * 60000;
     const result = [];
     for (let dayOffset = 0; dayOffset < 2 && !result.length; dayOffset++) {
       const day = new Date(now);
       day.setDate(day.getDate() + dayOffset);
-      const open = parseHM(BAKERY.hours.open, day);
-      const last = new Date(parseHM(BAKERY.hours.close, day).getTime() - step);
+      const open = parseHM(hours.open, day);
+      const last = new Date(parseHM(hours.close, day).getTime() - step);
       let t = dayOffset === 0 ? new Date(Math.ceil((now.getTime() + BAKERY.prepMinutes * 60000) / step) * step) : open;
       if (t < open) t = open;
       for (; t <= last && result.length < BAKERY.slotCount; t = new Date(t.getTime() + step)) {
@@ -676,7 +1033,8 @@
         <span class="slot__time">${s.time}</span><span class="slot__day">${i === 0 ? "ближайшее" : s.day}</span>
       </button>`)
       .join("");
-    els.slotsHint.textContent = `Соберём заказ к выбранному времени. Работаем с ${BAKERY.hours.open} до ${BAKERY.hours.close}.`;
+    const hours = currentHours();
+    els.slotsHint.textContent = `Соберём заказ к выбранному времени. ${selectedBakery && selectedBakery.hours ? "Эта пекарня работает" : "Работаем"} с ${hours.open} до ${hours.close}.`;
   }
 
   els.slots.addEventListener("click", (e) => {
@@ -702,6 +1060,7 @@
       const tgName = tgUser ? [tgUser.first_name, tgUser.last_name].filter(Boolean).join(" ") : "";
       els.name.value = tgName || store.get(STORAGE_NAME) || "";
     }
+    renderBakeryPick();
     renderSlots();
     renderSummary();
     open("checkout");
@@ -713,6 +1072,11 @@
   });
 
   function submitOrder() {
+    if (!selectedBakery) {
+      haptic.notify("error");
+      openBakery();
+      return;
+    }
     const name = els.name.value.trim();
     if (!name) {
       els.name.closest(".group").classList.add("is-invalid");
@@ -738,6 +1102,7 @@
       }),
       total: cartTotal(),
       pickup: { date: selectedSlot.date, time: selectedSlot.time },
+      bakery: { id: selectedBakery.id, city: selectedBakery.city, address: selectedBakery.address },
       name,
       comment: els.comment.value.trim().slice(0, 200),
     };
@@ -806,13 +1171,24 @@
       if (tgAtLeast("6.1")) tg.BackButton.onClick(back);
       tg.onEvent("themeChanged", applyTheme);
       applyTheme();
+      // Пекарня из облачного хранилища Telegram, если локально её нет (другое устройство)
+      if (!selectedBakery && tgAtLeast("6.9")) {
+        tg.CloudStorage.getItem(STORAGE_BAKERY, (err, id) => {
+          if (!err && bakeryById.has(id) && !selectedBakery) {
+            selectedBakery = bakeryById.get(id);
+            bakeryCity = selectedBakery.city;
+            store.set(STORAGE_BAKERY, id);
+            bakeryChanged();
+          }
+        });
+      }
     }
     syncMainButton();
     updateCartBadge();
   }
 
   // Для отладки в консоли
-  window.__buhanka = { get cart() { return cart; }, buildSlots, closeAll };
+  window.__buhanka = { get cart() { return cart; }, buildSlots, closeAll, statsOf, partsOf, byId };
 
   init();
 })();

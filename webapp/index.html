@@ -89,6 +89,12 @@
           </div>
 
           <div class="group">
+            <div class="group__label">Где заберёте</div>
+            <button class="panel bakery-pick" id="bakeryPick" type="button" data-pick-bakery></button>
+            <p class="group__hint group__hint--accent" id="bakeryHint" hidden>Выберите пекарню, чтобы оформить заказ</p>
+          </div>
+
+          <div class="group">
             <div class="group__label">Самовывоз ко времени</div>
             <div class="slots" id="slots" role="radiogroup" aria-label="Время самовывоза"></div>
             <p class="group__hint" id="slotsHint"></p>
@@ -111,6 +117,34 @@
       </div>
     </section>
 
+    <!-- Выбор пекарни -->
+    <section class="screen" id="bakeryScreen" role="dialog" aria-modal="true" aria-labelledby="bakeryTitle" hidden>
+      <div class="screen__scroll" id="bakeryScroll">
+        <div class="bakery-top">
+          <header class="screen__head">
+            <button class="nav-back" type="button" data-back aria-label="Назад">
+              <svg viewBox="0 0 24 24" width="22" height="22"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M15 5l-7 7 7 7"/></svg>
+            </button>
+            <h2 class="screen__title" id="bakeryTitle">Где заберёте</h2>
+            <span></span>
+          </header>
+          <div class="bakery-tools">
+            <div class="cities" id="bakeryCities" role="radiogroup" aria-label="Город"></div>
+            <label class="search">
+              <svg class="search__icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="m20 20-4.2-4.2M18 11a7 7 0 1 1-14 0 7 7 0 0 1 14 0Z"/></svg>
+              <input id="bakerySearch" type="search" placeholder="Улица или метро" autocomplete="off" enterkeyhint="search" aria-label="Поиск пекарни по улице или метро">
+            </label>
+            <button class="near-btn" id="bakeryNear" type="button">
+              <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M20.6 3.4a1 1 0 0 0-1.1-.2l-16 7a1 1 0 0 0 .1 1.9l6.6 1.7 1.7 6.6a1 1 0 0 0 1.9.1l7-16a1 1 0 0 0-.2-1.1Z"/></svg>
+              <span>Ближайшая ко мне</span>
+            </button>
+          </div>
+        </div>
+        <div class="bakery-list" id="bakeryList" role="radiogroup" aria-label="Пекарни"></div>
+        <p class="disclaimer">Адреса с карты пекарен на сайте сети buhanka.ru, данные на 20.10.2026</p>
+      </div>
+    </section>
+
     <!-- Запасная кнопка вне Telegram (в Telegram её роль играет MainButton) -->
     <div class="fallback-bar" id="fallbackBar" hidden>
       <button class="fallback-bar__btn" id="fallbackBtn" type="button"></button>
@@ -120,6 +154,7 @@
   </div>
 
   <script src="menu.js"></script>
+  <script src="bakeries.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

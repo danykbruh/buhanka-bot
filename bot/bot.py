@@ -4,6 +4,7 @@
     BOT_TOKEN      - токен от @BotFather
     ADMIN_CHAT_ID  - чат, куда дублируются заказы (ваш user id или id группы)
     WEBAPP_URL     - https-адрес мини-аппа (например, GitHub Pages)
+    BAKERIES_FILE  - необязательно: путь к списку пекарен, по умолчанию ../webapp/bakeries.js
 """
 
 from __future__ import annotations
@@ -38,6 +39,8 @@ MAX_ITEMS = 50
 MAX_QTY = 99
 MAX_PRICE = 100_000
 TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
+DEFAULT_BAKERIES_FILE = Path(__file__).resolve().parent.parent / "webapp" / "bakeries.js"
+BAKERIES_ARRAY_RE = re.compile(r"window\.BAKERIES\s*=\s*(\[.*\])\s*;", re.DOTALL)
 
 
 # ---------- Конфиг ----------
@@ -76,6 +79,28 @@ def load_config() -> Config:
     return Config(token=token, admin_chat_id=admin_chat_id, webapp_url=webapp_url)
 
 
+# ---------- Пекарни ----------
+
+@dataclass(frozen=True)
+class Bakery:
+    id: str
+    city: str
+    address: str
+
+
+def load_bakeries(path: Path) -> dict[str, Bakery]:
+    """Читает тот же список, что и мини-апп: JSON-массив внутри webapp/bakeries.js."""
+    match = BAKERIES_ARRAY_RE.search(path.read_text(encoding="utf-8"))
+    if not match:
+        raise ValueError(f"в {path} не найден массив window.BAKERIES")
+    bakeries = {}
+    for row in json.loads(match.group(1)):
+        bakeries[row["id"]] = Bakery(id=row["id"], city=row["city"], address=row["address"])
+    if not bakeries:
+        raise ValueError(f"в {path} пустой список пекарен")
+    return bakeries
+
+
 # ---------- Разбор заказа ----------
 
 class OrderError(ValueError):
@@ -97,6 +122,7 @@ class OrderItem:
 @dataclass(frozen=True)
 class Order:
     items: list[OrderItem]
+    bakery: Bakery
     pickup_date: date
     pickup_time: str
     name: str
@@ -126,7 +152,7 @@ def _int(value: object, field: str, lo: int, hi: int) -> int:
     return value
 
 
-def parse_order(raw: str) -> Order:
+def parse_order(raw: str, bakeries: dict[str, Bakery]) -> Order:
     try:
         data = json.loads(raw)
     except (json.JSONDecodeError, TypeError) as e:
@@ -149,6 +175,12 @@ def parse_order(raw: str) -> Order:
             price=_int(it.get("price"), f"items[{n}].price", 0, MAX_PRICE),
         ))
 
+    # Адрес берём из своего списка по id, а не из присланных данных
+    raw_bakery = data.get("bakery")
+    bakery_id = raw_bakery.get("id") if isinstance(raw_bakery, dict) else None
+    if not isinstance(bakery_id, str) or bakery_id not in bakeries:
+        raise OrderError(f"bakery.id: неизвестная пекарня {bakery_id!r:.40}")
+
     pickup = data.get("pickup")
     if not isinstance(pickup, dict):
         raise OrderError("pickup: не объект")
@@ -163,6 +195,7 @@ def parse_order(raw: str) -> Order:
     total = data.get("total")
     return Order(
         items=items,
+        bakery=bakeries[bakery_id],
         pickup_date=pickup_date,
         pickup_time=pickup_time,
         name=_text(data.get("name"), "name", 40),
@@ -200,6 +233,7 @@ def receipt_text(order: Order, number: int) -> str:
         items_block(order),
         "",
         f"<b>Итого: {money(order.total)}</b>",
+        f"📍 Где забрать: <b>{escape(order.bakery.address)}</b>",
         f"🕒 Самовывоз: <b>{pickup_label(order, date.today())}</b>",
         f"👤 Имя: {escape(order.name)}",
     ]
@@ -218,6 +252,7 @@ def admin_text(order: Order, number: int, message: Message) -> str:
         who += f" ({link}" + (f", @{escape(user.username)}" if user.username else "") + f", id {user.id})"
     parts = [
         f"🔔 <b>Новый заказ №{number}</b>",
+        f"📍 {escape(order.bakery.address)} <i>({escape(order.bakery.city)}, {escape(order.bakery.id)})</i>",
         f"🕒 Самовывоз: <b>{pickup_label(order, date.today())}</b>",
         f"👤 {who}",
         "",
@@ -234,7 +269,7 @@ def admin_text(order: Order, number: int, message: Message) -> str:
 
 # ---------- Хендлеры ----------
 
-def build_router(config: Config) -> Router:
+def build_router(config: Config, bakeries: dict[str, Bakery]) -> Router:
     router = Router()
     keyboard = ReplyKeyboardMarkup(
         keyboard=[[KeyboardButton(text=MENU_BUTTON_TEXT, web_app=WebAppInfo(url=config.webapp_url))]],
@@ -259,7 +294,7 @@ def build_router(config: Config) -> Router:
     async def web_app_order(message: Message, bot: Bot) -> None:
         raw = message.web_app_data.data
         try:
-            order = parse_order(raw)
+            order = parse_order(raw, bakeries)
         except OrderError as e:
             log.warning("Битый заказ от %s: %s; data=%.300r",
                         message.from_user.id if message.from_user else "?", e, raw)
@@ -289,9 +324,16 @@ def build_router(config: Config) -> Router:
 
 async def main() -> None:
     config = load_config()
+    bakeries_file = Path(os.getenv("BAKERIES_FILE", "").strip() or DEFAULT_BAKERIES_FILE)
+    try:
+        bakeries = load_bakeries(bakeries_file)
+    except (OSError, ValueError, KeyError) as e:
+        sys.exit(f"Не удалось загрузить список пекарен ({bakeries_file}): {e}")
+    log.info("Пекарен в списке: %d", len(bakeries))
+
     bot = Bot(config.token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
-    dp.include_router(build_router(config))
+    dp.include_router(build_router(config, bakeries))
 
     @dp.errors()
     async def on_error(event: ErrorEvent) -> bool:
