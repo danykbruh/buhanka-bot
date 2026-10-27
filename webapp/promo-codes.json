@@ -1,0 +1,23 @@
+{
+  "_about": "Сгенерировано bot/export_promos.py из bot/promos.json, руками не править. Только для предпросмотра скидки: итоговую сумму считает бот.",
+  "codes": [
+    {
+      "hash": "bc902e54c55338b166b9d69ab361944b4a1648240aa58d065628551970a0c502",
+      "title": "-10% на весь заказ",
+      "percent": 10,
+      "scope": "all",
+      "before": null,
+      "validFrom": "2026-10-01",
+      "validTo": "2026-12-31"
+    },
+    {
+      "hash": "040d527516e570ca5e9ed780530be9297bbb681bae452e9b430dc410ddce0c62",
+      "title": "-20% на кофе до 10:00",
+      "percent": 20,
+      "scope": "coffee",
+      "before": "10:00",
+      "validFrom": "2026-10-01",
+      "validTo": "2026-12-31"
+    }
+  ]
+}

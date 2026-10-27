@@ -13,12 +13,15 @@ import math
 import re
 from dataclasses import dataclass
 from datetime import date, datetime, time, timedelta, timezone
+from html import escape
 from pathlib import Path
 from typing import Any
 
 WEBAPP_DIR = Path(__file__).resolve().parent.parent / "webapp"
 DEFAULT_MENU_FILE = WEBAPP_DIR / "menu.json"
 DEFAULT_BAKERIES_FILE = WEBAPP_DIR / "bakeries.js"
+DEFAULT_PROMOS_FILE = Path(__file__).resolve().parent / "promos.json"
+PROMO_CODE_RE = re.compile(r"^[A-ZА-ЯЁ0-9_-]{1,24}$")
 
 BAKERIES_ARRAY_RE = re.compile(r"window\.BAKERIES\s*=\s*(\[.*\])\s*;", re.DOTALL)
 HOURS_RE = re.compile(r"^(\d{2}:\d{2})\s*-\s*(\d{2}:\d{2})$")
@@ -33,6 +36,8 @@ MSG_INVALID = "😕 Не получилось прочитать заказ. О�
 MSG_MENU_CHANGED = "🔄 Меню обновилось, откройте его заново и соберите заказ ещё раз."
 MSG_SLOT = "🕒 Это время самовывоза уже недоступно. Откройте меню и выберите другое."
 MSG_BAKERY = "📍 Не нашли выбранную пекарню. Откройте меню и выберите пекарню заново."
+MSG_PROMO_CHANGED = "🏷 Скидка по промокоду изменилась. Откройте корзину заново, мы пересчитаем сумму."
+_PROMO_FIX = " Уберите или замените код в корзине и оформите заказ снова."
 
 
 class OrderError(ValueError):
@@ -54,9 +59,22 @@ class Bakery:
 
 
 @dataclass(frozen=True)
+class Promo:
+    code: str
+    title: str
+    percent: int
+    scope: str            # "all" - весь заказ, "coffee" - только позиции с coffee: true
+    valid_from: date
+    valid_to: date        # включительно
+    before: str | None = None  # "10:00" - код действует только при заказе до этого времени
+
+
+@dataclass(frozen=True)
 class Menu:
     version: str
     items: dict[str, dict[str, Any]]
+    coffee_ids: frozenset[str]
+    stamps_per_reward: int  # сколько оплаченных кофе дают один бесплатный (каждый 6-й в подарок -> 5)
     max_qty: int
     max_lines: int
     name_max: int
@@ -77,6 +95,8 @@ def load_menu(path: Path = DEFAULT_MENU_FILE) -> Menu:
     return Menu(
         version=str(data.get("version", "")),
         items=items,
+        coffee_ids=frozenset(i for i, it in items.items() if it.get("coffee")),
+        stamps_per_reward=int(data.get("bonus", {}).get("coffeeEvery", 6)) - 1,
         max_qty=int(limits["maxQty"]),
         max_lines=int(limits["maxLines"]),
         name_max=int(limits["nameMax"]),
@@ -106,6 +126,34 @@ def load_bakeries(path: Path = DEFAULT_BAKERIES_FILE) -> dict[str, Bakery]:
     return bakeries
 
 
+def normalize_code(code: str) -> str:
+    return code.strip().upper()
+
+
+def promo_hash(code: str) -> str:
+    """Тот же хеш считает мини-апп (crypto.subtle) для предпросмотра скидки."""
+    return hashlib.sha256(normalize_code(code).encode("utf-8")).hexdigest()
+
+
+def load_promos(path: Path = DEFAULT_PROMOS_FILE) -> dict[str, Promo]:
+    data = json.loads(path.read_text(encoding="utf-8"))
+    promos = {}
+    for raw_code, p in data["codes"].items():
+        code = normalize_code(raw_code)
+        if not PROMO_CODE_RE.match(code):
+            raise ValueError(f"промокод {raw_code!r}: допустимы буквы, цифры, _ и -, до 24 символов")
+        if p["scope"] not in ("all", "coffee") or not 0 < int(p["percent"]) <= 100:
+            raise ValueError(f"промокод {code}: scope all/coffee и percent от 1 до 100")
+        if p.get("before"):
+            time.fromisoformat(p["before"])  # проверка формата ЧЧ:ММ
+        promos[code] = Promo(
+            code=code, title=p["title"], percent=int(p["percent"]), scope=p["scope"],
+            valid_from=date.fromisoformat(p["valid_from"]), valid_to=date.fromisoformat(p["valid_to"]),
+            before=p.get("before") or None,
+        )
+    return promos
+
+
 # ---------- Заказ ----------
 
 @dataclass(frozen=True)
@@ -128,10 +176,32 @@ class Order:
     pickup: datetime  # во времени пекарни
     name: str
     comment: str
+    promo_code: str | None = None
+    client_discount: int | None = None  # скидка, которую показал мини-апп; None - не проверял
 
     @property
     def total(self) -> int:
+        """Сумма по ценам меню, до скидок."""
         return sum(line.sum for line in self.lines)
+
+
+@dataclass(frozen=True)
+class Pricing:
+    subtotal: int
+    promo: Promo | None
+    promo_discount: int
+    bonus_title: str | None  # какой кофе отдали в подарок
+    bonus_discount: int
+    coffee_qty: int           # всего чашек кофе в заказе
+
+    @property
+    def total(self) -> int:
+        return self.subtotal - self.promo_discount - self.bonus_discount
+
+    @property
+    def paid_coffee(self) -> int:
+        """Чашки, которые пойдут в штампы: подарочная не считается."""
+        return self.coffee_qty - (1 if self.bonus_title else 0)
 
 
 def fingerprint(raw: str) -> str:
@@ -269,9 +339,21 @@ def parse_order(raw: str, menu: Menu, bakeries: dict[str, Bakery], now: datetime
             raise OrderError(f"items[{n}] {item['id']}: цена {it.get('price')!r:.20}, по меню {price}", MSG_MENU_CHANGED)
         lines.append(OrderLine(item_id=item["id"], title=item["title"], options=label, qty=qty, price=price))
 
-    total = sum(line.sum for line in lines)
-    if _int(data.get("total")) != total:
-        raise OrderError(f"total: {data.get('total')!r:.20}, по меню {total}", MSG_MENU_CHANGED)
+    # subtotal - сумма по ценам до скидок. Старые версии мини-аппа присылали только total
+    subtotal = sum(line.sum for line in lines)
+    client_subtotal = data.get("subtotal", data.get("total"))
+    if _int(client_subtotal) != subtotal:
+        raise OrderError(f"subtotal: {client_subtotal!r:.20}, по меню {subtotal}", MSG_MENU_CHANGED)
+
+    promo_raw = data.get("promo")
+    if promo_raw is not None and not isinstance(promo_raw, str):
+        raise OrderError("promo: ожидалась строка")
+    promo_code = normalize_code(promo_raw)[:40] if promo_raw and promo_raw.strip() else None
+    client_discount = data.get("discount")
+    if client_discount is not None and (_int(client_discount) is None or not 0 <= client_discount <= subtotal):
+        raise OrderError(f"discount: {client_discount!r:.20}")
+    if "subtotal" in data and _int(data.get("total")) != subtotal - (client_discount or 0):
+        raise OrderError(f"total: {data.get('total')!r:.20} при subtotal {subtotal} и скидке {client_discount}")
 
     # Адрес берём из своего списка по id, а не из присланных данных
     raw_bakery = data.get("bakery")
@@ -286,4 +368,66 @@ def parse_order(raw: str, menu: Menu, bakeries: dict[str, Bakery], now: datetime
         pickup=check_pickup(data.get("pickup"), bakery, menu, now),
         name=_text(data.get("name"), "name", menu.name_max, required=True),
         comment=_text(data.get("comment"), "comment", menu.comment_max, required=False),
+        promo_code=promo_code,
+        client_discount=client_discount,
     )
+
+
+# ---------- Скидки ----------
+# Правила повторены в webapp/app.js (promoPreview), менять их нужно вместе:
+# скидка в процентах округляется вниз до рубля и считается от цен меню, без учёта бонуса.
+
+def check_promo(code: str, promos: dict[str, Promo], now: datetime, menu: Menu) -> Promo:
+    """Действует ли промокод сейчас. Иначе OrderError с понятным текстом для гостя."""
+    shown = escape(code[:24])
+    promo = promos.get(code) if PROMO_CODE_RE.match(code) else None
+    if promo is None:
+        raise OrderError(f"promo: неизвестный код {code!r:.30}",
+                         f"🏷 Промокод «{shown}» не найден. Проверьте написание." + _PROMO_FIX)
+    local = now.astimezone(menu.tz)
+    if local.date() < promo.valid_from:
+        raise OrderError(f"promo {code}: начнёт действовать {promo.valid_from}",
+                         f"🏷 Промокод «{shown}» начнёт действовать {promo.valid_from:%d.%m.%Y}." + _PROMO_FIX)
+    if local.date() > promo.valid_to:
+        raise OrderError(f"promo {code}: истёк {promo.valid_to}",
+                         f"🏷 Срок действия промокода «{shown}» закончился {promo.valid_to:%d.%m.%Y}." + _PROMO_FIX)
+    if promo.before and local.time() >= time.fromisoformat(promo.before):
+        raise OrderError(f"promo {code}: только до {promo.before}, сейчас {local:%H:%M}",
+                         f"☕ Промокод «{shown}» действует при заказе до {promo.before}." + _PROMO_FIX)
+    return promo
+
+
+def promo_applies(promo: Promo, item_id: str, menu: Menu) -> bool:
+    return promo.scope == "all" or item_id in menu.coffee_ids
+
+
+def price_order(order: Order, menu: Menu, promos: dict[str, Promo], now: datetime, free_coffee: bool) -> Pricing:
+    """Итоговая сумма заказа: промокод и подарочный кофе. free_coffee - есть ли у гостя заработанный подарок."""
+    subtotal = order.total
+    coffee_lines = [line for line in order.lines if line.item_id in menu.coffee_ids]
+    coffee_qty = sum(line.qty for line in coffee_lines)
+
+    promo, promo_discount = None, 0
+    if order.promo_code:
+        promo = check_promo(order.promo_code, promos, now, menu)
+        eligible = sum(line.sum for line in order.lines if promo_applies(promo, line.item_id, menu))
+        if eligible == 0:
+            raise OrderError(f"promo {promo.code}: нет подходящих позиций",
+                             f"☕ Промокод «{escape(promo.code)}» действует только на кофе, а в заказе его нет." + _PROMO_FIX)
+        promo_discount = eligible * promo.percent // 100
+
+    # Мини-апп показывал свою скидку: если она разошлась с нашей, гость должен увидеть настоящую сумму
+    if order.client_discount is not None and order.client_discount != promo_discount:
+        raise OrderError(f"discount: мини-апп {order.client_discount}, бот {promo_discount}", MSG_PROMO_CHANGED)
+
+    # Подарок - самый дорогой кофе в заказе. Скидка по промокоду на эту чашку уже дана,
+    # поэтому бонус обнуляет только остаток её цены
+    bonus_title, bonus_discount = None, 0
+    if free_coffee and coffee_lines:
+        gift = max(coffee_lines, key=lambda line: line.price)
+        promo_part = gift.price * promo.percent // 100 if promo and promo_applies(promo, gift.item_id, menu) else 0
+        bonus_title = gift.title + (f", {gift.options}" if gift.options else "")
+        bonus_discount = gift.price - promo_part
+
+    return Pricing(subtotal=subtotal, promo=promo, promo_discount=promo_discount,
+                   bonus_title=bonus_title, bonus_discount=bonus_discount, coffee_qty=coffee_qty)

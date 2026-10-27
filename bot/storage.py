@@ -21,7 +21,29 @@ _MIGRATIONS = {
     "summary": "TEXT NOT NULL DEFAULT ''",
     "pickup_at": "REAL",
     "admin_text": "TEXT NOT NULL DEFAULT ''",
+    "subtotal": "INTEGER",
+    "promo_code": "TEXT",
+    "promo_discount": "INTEGER NOT NULL DEFAULT 0",
+    "bonus_discount": "INTEGER NOT NULL DEFAULT 0",
+    "coffee_qty": "INTEGER NOT NULL DEFAULT 0",   # оплаченные чашки кофе, идут в штампы
+    "bonus_used": "INTEGER NOT NULL DEFAULT 0",   # 1 - в заказе выдан подарочный кофе
 }
+
+
+@dataclass(frozen=True)
+class BonusState:
+    paid_ready: int   # оплаченные чашки кофе в заказах "Готов к выдаче"
+    used: int         # подарков выдано (в неотменённых заказах)
+    per_reward: int   # сколько чашек нужно на один подарок
+
+    @property
+    def available(self) -> int:
+        return max(0, self.paid_ready // self.per_reward - self.used)
+
+    @property
+    def stamps(self) -> int:
+        """Штампы на текущей карточке, от 0 до per_reward - 1."""
+        return self.paid_ready % self.per_reward
 
 
 @dataclass(frozen=True)
@@ -37,6 +59,8 @@ class StoredOrder:
     summary: str
     pickup_at: float | None
     admin_text: str
+    coffee_qty: int = 0
+    bonus_used: int = 0
 
 
 class Storage:
@@ -66,16 +90,31 @@ class Storage:
         self.db.commit()
 
     def add_order(self, user_id: int, total: int, bakery_id: str, payload: str, *, chat_id: int | None = None,
-                  summary: str = "", pickup_at: float | None = None) -> int:
-        """Сохраняет принятый заказ со статусом "new" и возвращает его номер."""
+                  summary: str = "", pickup_at: float | None = None, subtotal: int | None = None,
+                  promo_code: str | None = None, promo_discount: int = 0, bonus_discount: int = 0,
+                  coffee_qty: int = 0, bonus_used: bool = False) -> int:
+        """Сохраняет принятый заказ со статусом "new" и возвращает его номер. total - сумма к оплате."""
         now = time.time()
         cur = self.db.execute(
-            "INSERT INTO orders (user_id, created_at, total, bakery_id, payload, chat_id, status, status_at, summary, pickup_at)"
-            " VALUES (?, ?, ?, ?, ?, ?, 'new', ?, ?, ?)",
-            (user_id, now, total, bakery_id, payload, chat_id, now, summary, pickup_at),
+            "INSERT INTO orders (user_id, created_at, total, bakery_id, payload, chat_id, status, status_at, summary,"
+            " pickup_at, subtotal, promo_code, promo_discount, bonus_discount, coffee_qty, bonus_used)"
+            " VALUES (?, ?, ?, ?, ?, ?, 'new', ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (user_id, now, total, bakery_id, payload, chat_id, now, summary, pickup_at,
+             total if subtotal is None else subtotal, promo_code, promo_discount, bonus_discount, coffee_qty, int(bonus_used)),
         )
         self.db.commit()
         return cur.lastrowid
+
+    def bonus_state(self, user_id: int, per_reward: int) -> BonusState:
+        """Штампы считаются только по готовым заказам, подарки - по всем неотменённым,
+        чтобы один подарок нельзя было потратить дважды, пока первый заказ ещё не готов."""
+        paid, used = self.db.execute(
+            "SELECT COALESCE(SUM(CASE WHEN status = 'ready' THEN coffee_qty END), 0),"
+            "       COALESCE(SUM(CASE WHEN status != 'cancelled' THEN bonus_used END), 0)"
+            " FROM orders WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        return BonusState(paid_ready=paid, used=used, per_reward=per_reward)
 
     def set_admin_text(self, number: int, text: str) -> None:
         """Текст копии заказа у админа без строки статуса: по нему сообщение перерисовывается при смене статуса."""
@@ -121,4 +160,5 @@ class Storage:
         self.db.close()
 
 
-_COLUMNS = ("number, user_id, chat_id, created_at, total, bakery_id, status, status_at, summary, pickup_at, admin_text")
+_COLUMNS = ("number, user_id, chat_id, created_at, total, bakery_id, status, status_at, summary, pickup_at, admin_text,"
+            " coffee_qty, bonus_used")

@@ -33,9 +33,9 @@ from aiogram.types import (CallbackQuery, ErrorEvent, InlineKeyboardButton, Inli
                            Message, ReplyKeyboardMarkup, WebAppInfo)
 from dotenv import load_dotenv
 
-from order import (DEFAULT_BAKERIES_FILE, DEFAULT_MENU_FILE, Bakery, Menu, Order, OrderError,
-                   fingerprint, load_bakeries, load_menu, parse_order)
-from storage import Storage, StoredOrder
+from order import (DEFAULT_BAKERIES_FILE, DEFAULT_MENU_FILE, DEFAULT_PROMOS_FILE, Bakery, Menu, Order, OrderError,
+                   Pricing, Promo, fingerprint, load_bakeries, load_menu, load_promos, parse_order, price_order)
+from storage import BonusState, Storage, StoredOrder
 
 BOT_DIR = Path(__file__).resolve().parent
 load_dotenv(BOT_DIR / ".env")
@@ -73,6 +73,7 @@ class Config:
     bakeries_file: Path
     log_dir: Path
     data_dir: Path
+    promos_file: Path = DEFAULT_PROMOS_FILE
 
 
 def _path_env(name: str, default: Path) -> Path:
@@ -111,6 +112,7 @@ def load_config() -> Config:
         bakeries_file=_path_env("BAKERIES_FILE", DEFAULT_BAKERIES_FILE),
         log_dir=_path_env("LOG_DIR", BOT_DIR / "logs"),
         data_dir=_path_env("DATA_DIR", BOT_DIR / "data"),
+        promos_file=_path_env("PROMOS_FILE", DEFAULT_PROMOS_FILE),
     )
 
 
@@ -152,26 +154,75 @@ def items_block(order: Order) -> str:
     return "\n".join(lines)
 
 
-def receipt_text(order: Order, number: int, now: datetime) -> str:
+def plural(n: int, one: str, few: str, many: str) -> str:
+    if n % 10 == 1 and n % 100 != 11:
+        return one
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return few
+    return many
+
+
+def stamps_bar(state: BonusState) -> str:
+    """Полоска штампов: 🟤🟤🟤⚪⚪"""
+    return "🟤" * state.stamps + "⚪" * (state.per_reward - state.stamps)
+
+
+def bonus_text(state: BonusState) -> str:
+    lines = [
+        f"☕ <b>Каждый {state.per_reward + 1}-й кофе в подарок</b>",
+        "",
+        stamps_bar(state),
+        f"У вас {state.stamps} из {state.per_reward} штампов",
+    ]
+    if state.available:
+        lines += ["", f"🎁 Следующий кофе бесплатно" + (f" (подарков: {state.available})" if state.available > 1 else "")
+                  + ". Бот применит подарок сам в ближайшем заказе с кофе."]
+    else:
+        left = state.per_reward - state.stamps
+        lines += ["", f"Ещё {left} кофе, и следующий будет бесплатным."]
+    lines += ["", "<i>Штамп ставится за каждый оплаченный кофе (американо, капучино, латте, раф), "
+                  "когда заказ готов к выдаче. Кофе в комбо не считается.</i>"]
+    return "\n".join(lines)
+
+
+def money_lines(pricing: Pricing) -> list[str]:
+    """Строки суммы для чека и копии админу."""
+    if not pricing.promo_discount and not pricing.bonus_discount:
+        return [f"<b>Итого: {money(pricing.total)}</b>"]
+    lines = [f"Сумма: {money(pricing.subtotal)}"]
+    if pricing.promo_discount:
+        lines.append(f"🏷 Промокод {escape(pricing.promo.code)} ({escape(pricing.promo.title)}): -{money(pricing.promo_discount)}")
+    if pricing.bonus_discount:
+        lines.append(f"🎁 Кофе в подарок ({escape(pricing.bonus_title)}): -{money(pricing.bonus_discount)}")
+    lines.append(f"<b>Итого к оплате: {money(pricing.total)}</b>")
+    return lines
+
+
+def receipt_text(order: Order, pricing: Pricing, number: int, now: datetime) -> str:
     parts = [
         f"🧾 <b>Заказ №{number} оформлен</b>",
         "",
         items_block(order),
         "",
-        f"<b>Итого: {money(order.total)}</b>",
+        *money_lines(pricing),
         f"📍 Где забрать: <b>{escape(order.bakery.address)}</b>",
         f"🕒 Самовывоз: <b>{pickup_label(order.pickup, now)}</b>",
         f"👤 Имя: {escape(order.name)}",
     ]
     if order.comment:
         parts.append(f"💬 {escape(order.comment)}")
+    if pricing.bonus_title:
+        parts += ["", "🎁 Это ваш подарочный кофе за собранные штампы. Спасибо, что берёте кофе у нас!"]
+    if pricing.paid_coffee:
+        n = pricing.paid_coffee
+        parts += ["", f"☕ +{n} {plural(n, 'штамп', 'штампа', 'штампов')} к бонусам, когда заказ будет готов. Проверить: /bonus"]
     parts += ["", "Когда пекарня примет заказ, пришлём сообщение сюда. Все заказы и статусы: /orders",
               "Оплата при получении. Покажите этот чек на кассе.",
               "<i>Концепт. Не является официальным сервисом пекарни Буханка.</i>"]
     return "\n".join(parts)
 
 
-def admin_text(order: Order, number: int, message: Message, now: datetime) -> str:
+def admin_text(order: Order, pricing: Pricing, number: int, message: Message, now: datetime) -> str:
     user = message.from_user
     who = escape(order.name)
     if user:
@@ -185,7 +236,7 @@ def admin_text(order: Order, number: int, message: Message, now: datetime) -> st
         "",
         items_block(order),
         "",
-        f"<b>Итого: {money(order.total)}</b>",
+        *money_lines(pricing),
     ]
     if order.comment:
         parts.append(f"💬 {escape(order.comment)}")
@@ -313,7 +364,8 @@ class IsAdmin(Filter):
 # ---------- Хендлеры ----------
 
 def build_router(config: Config, menu: Menu, bakeries: dict[str, Bakery], storage: Storage,
-                 notifier: ErrorNotifier, started_at: float) -> Router:
+                 notifier: ErrorNotifier, started_at: float, promos: dict[str, Promo] | None = None) -> Router:
+    promos = promos or {}
     router = Router()
     duplicates = DuplicateGuard()
     keyboard = ReplyKeyboardMarkup(
@@ -373,20 +425,28 @@ def build_router(config: Config, menu: Menu, bakeries: dict[str, Bakery], storag
         now = datetime.now(timezone.utc)
         try:
             order = parse_order(raw, menu, bakeries, now)
+            # Скидки считает только бот: промокод по bot/promos.json, подарочный кофе по штампам из базы
+            bonus = storage.bonus_state(user_id, menu.stamps_per_reward)
+            pricing = price_order(order, menu, promos, now, free_coffee=bonus.available > 0)
         except OrderError as e:
             log.warning("Заказ от %s не принят: %s; data=%.300r", user_id, e, raw)
             await message.answer(e.user_message, reply_markup=keyboard)
             return
 
         summary = ", ".join(f"{line.title} × {line.qty}" for line in order.lines)
-        number = storage.add_order(user_id, order.total, order.bakery.id, raw, chat_id=message.chat.id,
-                                   summary=summary, pickup_at=order.pickup.timestamp())
-        log.info("Заказ №%s от %s на %s, %s", number, user_id, order.total, order.bakery.id)
-        await message.answer(receipt_text(order, number, now), reply_markup=keyboard)
+        number = storage.add_order(
+            user_id, pricing.total, order.bakery.id, raw, chat_id=message.chat.id, summary=summary,
+            pickup_at=order.pickup.timestamp(), subtotal=pricing.subtotal,
+            promo_code=pricing.promo.code if pricing.promo else None, promo_discount=pricing.promo_discount,
+            bonus_discount=pricing.bonus_discount, coffee_qty=pricing.paid_coffee, bonus_used=bool(pricing.bonus_title),
+        )
+        log.info("Заказ №%s от %s на %s (скидки %s + %s), %s", number, user_id, pricing.total,
+                 pricing.promo_discount, pricing.bonus_discount, order.bakery.id)
+        await message.answer(receipt_text(order, pricing, number, now), reply_markup=keyboard)
 
         if config.admin_chat_id is not None:
             try:
-                base = admin_text(order, number, message, now)
+                base = admin_text(order, pricing, number, message, now)
                 storage.set_admin_text(number, base)
                 stored = storage.get_order(number)
                 await bot.send_message(config.admin_chat_id, f"{base}\n\n{status_line(stored, menu.tz)}",
@@ -394,6 +454,11 @@ def build_router(config: Config, menu: Menu, bakeries: dict[str, Bakery], storag
             except Exception:
                 # Клиент уже получил чек, ошибка уведомления админа не должна это ломать
                 log.exception("Не удалось отправить заказ №%s админу %s", number, config.admin_chat_id)
+
+    @router.message(Command("bonus"))
+    async def my_bonus(message: Message) -> None:
+        user_id = message.from_user.id if message.from_user else message.chat.id
+        await message.answer(bonus_text(storage.bonus_state(user_id, menu.stamps_per_reward)), reply_markup=keyboard)
 
     @router.message(Command("orders"))
     async def my_orders(message: Message) -> None:
@@ -434,8 +499,16 @@ def build_router(config: Config, menu: Menu, bakeries: dict[str, Bakery], storag
 
         delivered = True
         if stored.chat_id is not None:
+            text = client_status_text(stored, bakeries.get(stored.bakery_id), menu.tz)
+            # Штампы начисляются в момент "Готов к выдаче": сразу показываем гостю новый счёт
+            if status == "ready" and stored.coffee_qty:
+                state = storage.bonus_state(stored.user_id, menu.stamps_per_reward)
+                n = stored.coffee_qty
+                text += f"\n\n☕ +{n} {plural(n, 'штамп', 'штампа', 'штампов')}: {stamps_bar(state)} {state.stamps} из {state.per_reward}"
+                if state.available:
+                    text += "\n🎁 Следующий кофе бесплатно, бот применит подарок сам."
             try:
-                await bot.send_message(stored.chat_id, client_status_text(stored, bakeries.get(stored.bakery_id), menu.tz))
+                await bot.send_message(stored.chat_id, text)
             except (TelegramForbiddenError, TelegramBadRequest) as e:
                 delivered = False
                 log.warning("Гость заказа №%s не получил статус: %s", number, e)
@@ -459,8 +532,9 @@ async def main() -> None:
     try:
         menu = load_menu(config.menu_file)
         bakeries = load_bakeries(config.bakeries_file)
+        promos = load_promos(config.promos_file)
     except (OSError, ValueError, KeyError, TypeError) as e:
-        log.error("Не удалось загрузить меню или пекарни: %s", e)
+        log.error("Не удалось загрузить меню, пекарни или промокоды: %s", e)
         sys.exit(1)
     storage = Storage(config.data_dir / "orders.db")
     log.info("Меню %s: %d позиций, пекарен: %d, последний заказ: %s",
@@ -470,7 +544,8 @@ async def main() -> None:
     notifier = ErrorNotifier(config.admin_chat_id)
     bot = Bot(config.token, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
-    dp.include_router(build_router(config, menu, bakeries, storage, notifier, started_at))
+    dp.include_router(build_router(config, menu, bakeries, storage, notifier, started_at, promos))
+    log.info("Промокодов: %d", len(promos))
 
     @dp.errors()
     async def on_error(event: ErrorEvent, bot: Bot) -> bool:

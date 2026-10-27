@@ -13,7 +13,7 @@ COPY bot/requirements.txt bot/requirements.txt
 RUN pip install -r bot/requirements.txt
 
 # Код бота и общие с мини-аппом данные. Токена в образе нет: .env подключается снаружи.
-COPY bot/*.py bot/
+COPY bot/*.py bot/promos.json bot/
 COPY webapp/menu.json webapp/bakeries.js webapp/
 
 # Не от root. Папки logs и data монтируются с хоста, владелец на хосте должен быть uid 1000.

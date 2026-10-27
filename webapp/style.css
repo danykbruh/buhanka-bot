@@ -599,6 +599,66 @@ body.has-fallback .product__note { padding-bottom: calc(96px + var(--safe-bottom
 .past__repeat:active { background: var(--accent-press); }
 .past__repeat:disabled { background: var(--line); color: var(--hint); }
 
+/* ============ Акции: карусель ============ */
+.promos { margin: 0 calc(-1 * var(--gutter)) 14px; }
+.promos__track {
+  display: flex; gap: 10px; overflow-x: auto; scrollbar-width: none;
+  scroll-snap-type: x mandatory; scroll-padding: 0 var(--gutter);
+  padding: 2px var(--gutter) 6px;
+}
+.promos__track::-webkit-scrollbar { display: none; }
+.banner {
+  position: relative; overflow: hidden; flex: 0 0 88%; scroll-snap-align: start;
+  display: flex; align-items: center; gap: 10px; min-height: 118px; padding: 16px 16px 16px 18px;
+  border-radius: 20px; text-align: left; box-shadow: var(--shadow);
+}
+.banner:active { transform: scale(.98); }
+.banner::after {
+  content: ""; position: absolute; right: -30px; top: -40px; width: 150px; height: 150px; border-radius: 50%;
+  background: rgba(255, 255, 255, .12); pointer-events: none;
+}
+.banner--accent { background: linear-gradient(135deg, #B5562B 0%, #D9864F 100%); color: #FFFFFF; }
+.banner--cocoa { background: linear-gradient(135deg, #3B2418 0%, #6B4330 100%); color: #F6EFE4; }
+.banner--cream { background: linear-gradient(135deg, #F4E6D1 0%, #E8CFAC 100%); color: #2B1D14; }
+.banner--cream::after { background: rgba(255, 255, 255, .35); }
+.banner__text { position: relative; z-index: 1; flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+.banner__title { font-family: var(--font-display); font-weight: 700; font-size: 19px; line-height: 1.15; }
+.banner__sub { font-size: 13px; line-height: 1.35; opacity: .9; }
+.banner__cta {
+  margin-top: 6px; padding: 5px 11px; border-radius: 999px; font-size: 12px; font-weight: 700;
+  background: rgba(255, 255, 255, .22);
+}
+.banner--cream .banner__cta { background: rgba(43, 29, 20, .08); color: #9A4520; }
+.banner__emoji { position: relative; z-index: 1; flex: none; font-size: 44px; line-height: 1; }
+.promos__dots { display: flex; justify-content: center; gap: 6px; margin-top: 4px; }
+.promos__dot { width: 6px; height: 6px; border-radius: 999px; background: var(--line); transition: width .25s var(--ease), background-color .25s; }
+.promos__dot.is-active { width: 18px; background: var(--accent); }
+
+/* ============ Промокод и бонусы в корзине ============ */
+.promo { margin: 16px var(--gutter) 0; }
+.promo__form { display: flex; align-items: center; padding-right: 6px; }
+.promo__form .input { flex: 1; min-width: 0; text-transform: uppercase; letter-spacing: .04em; }
+.promo__form .input::placeholder { text-transform: none; letter-spacing: 0; }
+.promo__apply {
+  flex: none; height: 38px; padding: 0 16px; border-radius: 999px;
+  background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: 14px;
+}
+.promo__applied { display: flex; align-items: center; gap: 10px; padding: 12px 14px; }
+.promo__tag {
+  flex: none; padding: 5px 10px; border-radius: 999px; font-size: 13px; font-weight: 700; letter-spacing: .04em;
+  background: var(--accent); color: var(--on-accent);
+}
+.promo__info { flex: 1; min-width: 0; font-size: 13.5px; line-height: 1.3; color: var(--hint); }
+.promo__applied.is-error { border-color: var(--danger); }
+.promo__applied.is-error .promo__tag { background: var(--danger); color: #FFFFFF; text-decoration: line-through; }
+.promo__applied.is-error .promo__info { color: var(--danger); }
+.totals__row--discount, .sum-row--discount { color: var(--accent); font-weight: 600; }
+.totals__bonus {
+  display: flex; align-items: center; gap: 8px; margin-top: 12px; padding-top: 10px;
+  border-top: 1px dashed var(--line); font-size: 12.5px; line-height: 1.3; color: var(--hint);
+}
+.totals__bonus svg { flex: none; color: var(--accent); }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
 }

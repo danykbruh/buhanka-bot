@@ -38,6 +38,12 @@
     }
   }
 
+  // Правила промокодов (хеши кодов) для предпросмотра скидки. Не загрузились - скидку посчитает бот
+  const promoRulesLoading = fetch("promo-codes.json", { cache: "no-cache" })
+    .then((res) => (res.ok ? res.json() : null))
+    .then((data) => (data && Array.isArray(data.codes) ? data.codes : null))
+    .catch(() => null);
+
   const MENU = await loadMenu();
   if (!MENU) return;
   const { categories, items } = MENU;
@@ -262,6 +268,7 @@
     cartBadge: $("#cartBadge"),
     orders: $("#ordersScreen"),
     ordersBody: $("#ordersBody"),
+    promos: $("#promos"),
     bakery: $("#bakeryScreen"),
     bakeryPick: $("#bakeryPick"),
     bakeryHint: $("#bakeryHint"),
@@ -622,7 +629,7 @@
   }
 
   function syncMainButton() {
-    const total = cartTotal();
+    const total = payableTotal();
     switch (top()) {
       case "product":
         setMain(`Добавить - ${money(productTotal())}`, addFromProduct);
@@ -901,13 +908,125 @@
         <div class="group__label">Где заберёте</div>
         <button type="button" class="panel bakery-pick${selectedBakery ? "" : " is-empty"}" data-pick-bakery>${bakeryPickHtml()}</button>
       </div>
+      ${promoBlockHtml()}
       <div class="totals">
         <div class="totals__row totals__row--muted"><span>Позиций</span><span>${cartCount()} шт</span></div>
         <div class="totals__row totals__row--muted"><span>Самовывоз</span><span>бесплатно</span></div>
-        <div class="totals__row totals__row--big"><span>Итого</span><span>${money(cartTotal())}</span></div>
+        ${discountRowHtml("totals__row totals__row--discount")}
+        <div class="totals__row totals__row--big"><span>Итого</span><span>${money(payableTotal())}</span></div>
+        <div class="totals__bonus">${ICON_GIFT}<span>Бонусы проверит бот при оформлении: каждый 6-й кофе в подарок</span></div>
       </div>
       <div class="cart-pad"></div>`;
   }
+
+  // ---------- Промокод ----------
+  // Код хранится только на этом устройстве, вместе с корзиной. Скидку показываем заранее,
+  // но итог пересчитывает бот по bot/promos.json. Правила те же, что в bot/order.py (price_order).
+  const KEY_PROMO = "buhanka_promo";
+  const ICON_GIFT = '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" d="M4 11h16v9a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-9Zm-1-4h18v4H3V7Zm9 0v14M12 7S10.5 3 8 3.5 6.5 7 12 7Zm0 0s1.5-4 4-3.5S17.5 7 12 7Z"/></svg>';
+  let promoRules = null;               // null - правила не загрузились, предпросмотр невозможен
+  let appliedPromo = null;             // { code, rule } или { code, rule: undefined } если не проверить
+
+  const normalizeCode = (code) => code.trim().toUpperCase();
+  const promoForOrder = () => { const p = promoPreview(); return p && !p.error ? p.code : null; };
+
+  async function sha256hex(text) {
+    if (!window.crypto || !crypto.subtle) return null; // нет в небезопасном контексте
+    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+    return Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  async function applyPromo(raw) {
+    const code = normalizeCode(raw).slice(0, 24);
+    if (!code) { removePromo(); return; }
+    if (!promoRules) promoRules = await promoRulesLoading; // не загрузились - останется null
+    const hash = promoRules ? await sha256hex(code) : null;
+    appliedPromo = { code, rule: hash ? promoRules.find((r) => r.hash === hash) || null : undefined };
+    store.set(KEY_PROMO, code);
+    promoChanged();
+  }
+
+  function removePromo() {
+    appliedPromo = null;
+    store.set(KEY_PROMO, "");
+    promoChanged();
+  }
+
+  function promoChanged() {
+    if (stack.includes("cart")) renderCart();
+    if (stack.includes("checkout")) renderSummary();
+    syncMainButton();
+  }
+
+  const bakeryNow = () => new Date(Date.now() + TZ_SHIFT); // читать через getUTC*
+  const ruDate = (iso) => iso.split("-").reverse().join(".");
+
+  // Скидка по коду для текущей корзины: { code, discount, title } или { code, error }.
+  // discount: null - правила не загрузились, скидку покажет бот
+  function promoPreview() {
+    if (!appliedPromo) return null;
+    const { code, rule } = appliedPromo;
+    if (rule === undefined) return { code, discount: null, title: "скидку посчитает бот" };
+    if (!rule) return { code, error: "Такого промокода нет. Проверьте написание" };
+    const now = bakeryNow();
+    const today = `${now.getUTCFullYear()}-${pad(now.getUTCMonth() + 1)}-${pad(now.getUTCDate())}`;
+    if (today < rule.validFrom) return { code, error: `Промокод начнёт действовать ${ruDate(rule.validFrom)}` };
+    if (today > rule.validTo) return { code, error: `Срок действия промокода закончился ${ruDate(rule.validTo)}` };
+    if (rule.before && `${pad(now.getUTCHours())}:${pad(now.getUTCMinutes())}` >= rule.before) {
+      return { code, error: `Промокод действует при заказе до ${rule.before}` };
+    }
+    const eligible = cart.reduce((sum, l) => {
+      const item = byId.get(l.id);
+      return rule.scope === "all" || item.coffee ? sum + unitPrice(item, l.opts) * l.qty : sum;
+    }, 0);
+    if (!eligible) return { code, error: rule.scope === "coffee" ? "Код действует только на кофе: добавьте кофе в корзину" : "Корзина пуста" };
+    return { code, discount: Math.floor((eligible * rule.percent) / 100), title: rule.title };
+  }
+
+  const promoDiscount = () => { const p = promoPreview(); return p && p.discount ? p.discount : 0; };
+  const payableTotal = () => cartTotal() - promoDiscount();
+
+  function discountRowHtml(cls) {
+    const p = promoPreview();
+    if (!p || p.error) return "";
+    return `<div class="${cls}"><span>Промокод ${esc(p.code)}</span><span>${p.discount == null ? "проверит бот" : `-${money(p.discount)}`}</span></div>`;
+  }
+
+  function promoBlockHtml() {
+    const p = promoPreview();
+    if (!p) {
+      return `<form class="promo" data-promo-form novalidate>
+        <div class="group__label">Промокод</div>
+        <div class="panel promo__form">
+          <input class="input" name="promo" type="text" maxlength="24" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="Например, BUHANKA10" aria-label="Промокод">
+          <button class="promo__apply" type="submit">Применить</button>
+        </div>
+      </form>`;
+    }
+    return `<div class="promo">
+      <div class="group__label">Промокод</div>
+      <div class="panel promo__applied${p.error ? " is-error" : ""}">
+        <span class="promo__tag">${esc(p.code)}</span>
+        <span class="promo__info">${esc(p.error || p.title)}</span>
+        <button class="link-btn" type="button" data-promo-remove>Убрать</button>
+      </div>
+    </div>`;
+  }
+
+  els.cartBody.addEventListener("submit", async (e) => {
+    const form = e.target.closest("[data-promo-form]");
+    if (!form) return;
+    e.preventDefault();
+    const value = form.elements.promo.value;
+    if (!value.trim()) { form.elements.promo.focus(); return; }
+    form.elements.promo.blur();
+    await applyPromo(value);
+    const p = promoPreview();
+    haptic.notify(p && p.error ? "error" : "success");
+  });
+  els.cartBody.addEventListener("click", (e) => {
+    if (e.target.closest("[data-promo-remove]")) { removePromo(); haptic.impact("light"); }
+  });
 
   els.cartBody.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-line]");
@@ -1213,7 +1332,8 @@
         const opts = optsLabel(item, l.opts);
         return `<div class="sum-row"><span>${esc(item.title)} × ${l.qty}${opts ? `<small>${esc(opts)}</small>` : ""}</span><b>${money(unitPrice(item, l.opts) * l.qty)}</b></div>`;
       }).join("") +
-      `<div class="sum-row sum-row--total"><span>Итого</span><b>${money(cartTotal())}</b></div>`;
+      discountRowHtml("sum-row sum-row--discount") +
+      `<div class="sum-row sum-row--total"><span>Итого</span><b>${money(payableTotal())}</b></div>`;
   }
 
   function openCheckout() {
@@ -1263,7 +1383,12 @@
       v: 2,
       menu: MENU.version,
       items: cart.map((l) => ({ id: l.id, opts: l.opts, qty: l.qty, price: unitPrice(byId.get(l.id), l.opts) })),
-      total: cartTotal(),
+      // Сумма до скидок, промокод и скидка, которую видел гость. Бот пересчитает всё сам, а подарочный кофе
+      // добавит от себя. Код с ошибкой не шлём: гость видел сумму без скидки
+      subtotal: cartTotal(),
+      promo: promoForOrder(),
+      discount: promoForOrder() ? promoPreview().discount : 0,
+      total: payableTotal(),
       pickup: { date: selectedSlot.date, time: selectedSlot.time },
       bakery: { id: selectedBakery.id, city: selectedBakery.city, address: selectedBakery.address },
       name: name.slice(0, LIMITS.nameMax),
@@ -1286,6 +1411,7 @@
       haptic.notify("success");
       // sendData сразу закрывает мини-апп, поэтому сначала дожидаемся записи истории (не дольше CLOUD_TIMEOUT)
       await addHistory(entry);
+      store.set(KEY_PROMO, ""); // промокод относится к этому заказу
       cart = [];
       saveCart();
       tg.sendData(json); // Telegram закроет мини-апп и передаст данные боту
@@ -1325,7 +1451,7 @@
   function historyEntry() {
     return {
       t: Date.now(),
-      s: cartTotal(),
+      s: payableTotal(),
       b: selectedBakery ? selectedBakery.id : null,
       i: cart.map((l) => [l.id, l.opts, l.qty, byId.get(l.id).title]),
     };
@@ -1454,6 +1580,86 @@
     }
   }
 
+  // ---------- Акции: карусель баннеров из menu.json (promos) ----------
+  const BANNER_THEMES = new Set(["accent", "cocoa", "cream"]);
+  const BANNER_CTA = { code: "Применить код", item: "Посмотреть", info: "Как это работает" };
+  const AUTOPLAY_MS = 5000;
+  let banners = [];
+  let bannerIndex = 0;
+  let bannerPausedUntil = 0;
+
+  // hours: ["00:00", "10:00"] - баннер виден только в это время пекарни (утренний кофе после 10 не показываем)
+  function visibleBanners() {
+    const now = bakeryNow();
+    const hm = `${pad(now.getUTCHours())}:${pad(now.getUTCMinutes())}`;
+    return (MENU.promos || []).filter((b) => !b.hours || (hm >= b.hours[0] && hm < b.hours[1]));
+  }
+
+  function renderBanners() {
+    banners = visibleBanners();
+    els.promos.hidden = !banners.length;
+    if (!banners.length) return;
+    els.promos.innerHTML = `
+      <div class="promos__track">
+        ${banners.map((b, i) => `<button type="button" class="banner banner--${BANNER_THEMES.has(b.theme) ? b.theme : "accent"}" data-banner="${i}">
+          <span class="banner__text">
+            <span class="banner__title">${esc(b.title)}</span>
+            ${b.subtitle ? `<span class="banner__sub">${esc(b.subtitle)}</span>` : ""}
+            <span class="banner__cta">${BANNER_CTA[b.action && b.action.type] || "Подробнее"}</span>
+          </span>
+          ${b.emoji ? `<span class="banner__emoji" aria-hidden="true">${esc(b.emoji)}</span>` : ""}
+        </button>`).join("")}
+      </div>
+      ${banners.length > 1 ? `<div class="promos__dots" aria-hidden="true">${banners.map((_, i) => `<span class="promos__dot${i === 0 ? " is-active" : ""}"></span>`).join("")}</div>` : ""}`;
+    const track = $(".promos__track", els.promos);
+    track.addEventListener("scroll", () => {
+      const slide = track.children[0];
+      const i = Math.round(track.scrollLeft / (slide.offsetWidth + 10));
+      if (i !== bannerIndex) setBannerDot(i);
+    }, { passive: true });
+    track.addEventListener("pointerdown", () => { bannerPausedUntil = Date.now() + 2 * AUTOPLAY_MS; }, { passive: true });
+  }
+
+  function setBannerDot(i) {
+    bannerIndex = Math.max(0, Math.min(banners.length - 1, i));
+    $$(".promos__dot", els.promos).forEach((d, k) => d.classList.toggle("is-active", k === bannerIndex));
+  }
+
+  // Автопрокрутка: только на главном экране, когда гость не трогает карусель
+  const reduceMotion = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  if (!reduceMotion) {
+    setInterval(() => {
+      if (banners.length < 2 || document.hidden || stack.length || Date.now() < bannerPausedUntil || query) return;
+      const track = $(".promos__track", els.promos);
+      if (!track || track.getBoundingClientRect().bottom < 0) return;
+      const next = (bannerIndex + 1) % banners.length;
+      track.scrollTo({ left: track.children[next].offsetLeft - track.children[0].offsetLeft, behavior: "smooth" });
+    }, AUTOPLAY_MS);
+  }
+
+  els.promos.addEventListener("click", async (e) => {
+    const slide = e.target.closest("[data-banner]");
+    if (!slide) return;
+    const banner = banners[Number(slide.dataset.banner)];
+    const action = banner && banner.action;
+    if (!action) return;
+    haptic.impact("light");
+    if (action.type === "code") {
+      await applyPromo(action.code);
+      const p = promoPreview();
+      const cartIssue = p.error && /корзин/i.test(p.error); // "добавьте кофе в корзину" - не ошибка кода
+      if (p.error && !cartIssue) toast(p.error, 3500);
+      else if (!cart.length) toast(`Промокод ${p.code} сохранён: скидка появится в корзине`, 3000);
+      else if (cartIssue) toast(p.error, 3500);
+      else toast(`Промокод ${p.code} применён: -${money(p.discount || 0)}`, 3000);
+    } else if (action.type === "item" && byId.has(action.id)) {
+      openProduct(action.id);
+    } else if (action.type === "info") {
+      if (inTg) tg.showAlert(action.text);
+      else toast(action.text, 5000);
+    }
+  });
+
   // ---------- Тост ----------
   let toastTimer = 0;
   function toast(text, duration = 2200) {
@@ -1496,6 +1702,15 @@
       applyTheme();
     }
     syncFromCloud();
+    renderBanners();
+    restorePromo();
+  }
+
+  // Промокод из прошлого открытия: ждём правила, чтобы сразу показать скидку
+  async function restorePromo() {
+    promoRules = await promoRulesLoading;
+    const saved = store.get(KEY_PROMO);
+    if (saved) await applyPromo(saved);
     syncMainButton();
     updateCartBadge();
   }
