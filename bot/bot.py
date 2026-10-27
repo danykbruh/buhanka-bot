@@ -27,14 +27,15 @@ from pathlib import Path
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
 from aiogram.enums import ParseMode
-from aiogram.exceptions import TelegramUnauthorizedError
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError, TelegramUnauthorizedError
 from aiogram.filters import Command, CommandStart, Filter
-from aiogram.types import ErrorEvent, KeyboardButton, Message, ReplyKeyboardMarkup, WebAppInfo
+from aiogram.types import (CallbackQuery, ErrorEvent, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton,
+                           Message, ReplyKeyboardMarkup, WebAppInfo)
 from dotenv import load_dotenv
 
 from order import (DEFAULT_BAKERIES_FILE, DEFAULT_MENU_FILE, Bakery, Menu, Order, OrderError,
                    fingerprint, load_bakeries, load_menu, parse_order)
-from storage import Storage
+from storage import Storage, StoredOrder
 
 BOT_DIR = Path(__file__).resolve().parent
 load_dotenv(BOT_DIR / ".env")
@@ -48,6 +49,17 @@ RATE_LIMIT_ORDERS = 3
 RATE_LIMIT_WINDOW = 10 * 60   # секунд
 DUPLICATE_WINDOW = 30         # одинаковый заказ за это время считается двойным нажатием
 ERROR_NOTIFY_INTERVAL = 5 * 60
+
+# Статусы заказа: код в базе -> (значок, подпись). "new" ставится при оформлении, остальные - кнопками админа
+STATUSES = {
+    "new": ("🆕", "Новый"),
+    "accepted": ("✅", "Принят"),
+    "cooking": ("👩‍🍳", "Готовится"),
+    "ready": ("🥐", "Готов к выдаче"),
+    "cancelled": ("❌", "Отменён"),
+}
+ADMIN_STATUS_BUTTONS = ("accepted", "cooking", "ready", "cancelled")
+STATUS_CALLBACK = "st"
 
 
 # ---------- Конфиг и логи ----------
@@ -124,10 +136,10 @@ def money(n: int) -> str:
     return f"{n:,}".replace(",", " ") + " ₽"
 
 
-def pickup_label(order: Order, now: datetime) -> str:
-    delta = (order.pickup.date() - now.astimezone(order.pickup.tzinfo).date()).days
-    day = {0: "сегодня", 1: "завтра"}.get(delta, order.pickup.strftime("%d.%m"))
-    return f"{day}, {order.pickup:%H:%M}"
+def pickup_label(when: datetime, now: datetime) -> str:
+    delta = (when.date() - now.astimezone(when.tzinfo).date()).days
+    day = {0: "сегодня", 1: "завтра"}.get(delta, when.strftime("%d.%m"))
+    return f"{day}, {when:%H:%M}"
 
 
 def items_block(order: Order) -> str:
@@ -142,18 +154,19 @@ def items_block(order: Order) -> str:
 
 def receipt_text(order: Order, number: int, now: datetime) -> str:
     parts = [
-        f"🧾 <b>Заказ №{number} принят</b>",
+        f"🧾 <b>Заказ №{number} оформлен</b>",
         "",
         items_block(order),
         "",
         f"<b>Итого: {money(order.total)}</b>",
         f"📍 Где забрать: <b>{escape(order.bakery.address)}</b>",
-        f"🕒 Самовывоз: <b>{pickup_label(order, now)}</b>",
+        f"🕒 Самовывоз: <b>{pickup_label(order.pickup, now)}</b>",
         f"👤 Имя: {escape(order.name)}",
     ]
     if order.comment:
         parts.append(f"💬 {escape(order.comment)}")
-    parts += ["", "Оплата при получении. Покажите этот чек на кассе.",
+    parts += ["", "Когда пекарня примет заказ, пришлём сообщение сюда. Все заказы и статусы: /orders",
+              "Оплата при получении. Покажите этот чек на кассе.",
               "<i>Концепт. Не является официальным сервисом пекарни Буханка.</i>"]
     return "\n".join(parts)
 
@@ -167,7 +180,7 @@ def admin_text(order: Order, number: int, message: Message, now: datetime) -> st
     parts = [
         f"🔔 <b>Новый заказ №{number}</b>",
         f"📍 {escape(order.bakery.address)} <i>({escape(order.bakery.city)}, {escape(order.bakery.id)})</i>",
-        f"🕒 Самовывоз: <b>{pickup_label(order, now)}</b>",
+        f"🕒 Самовывоз: <b>{pickup_label(order.pickup, now)}</b>",
         f"👤 {who}",
         "",
         items_block(order),
@@ -177,6 +190,59 @@ def admin_text(order: Order, number: int, message: Message, now: datetime) -> st
     if order.comment:
         parts.append(f"💬 {escape(order.comment)}")
     return "\n".join(parts)
+
+
+def status_label(status: str) -> str:
+    emoji, label = STATUSES.get(status, ("•", status))
+    return f"{emoji} {label}"
+
+
+def status_line(stored: StoredOrder, tz: timezone) -> str:
+    at = datetime.fromtimestamp(stored.status_at or stored.created_at, tz)
+    return f"<b>Статус: {status_label(stored.status)}</b> · {at:%H:%M}"
+
+
+def admin_keyboard(number: int, current: str) -> InlineKeyboardMarkup:
+    """Кнопки статуса под копией заказа у админа, текущий статус отмечен точкой."""
+    buttons = [
+        InlineKeyboardButton(
+            text=("• " if code == current else "") + STATUSES[code][1],
+            callback_data=f"{STATUS_CALLBACK}:{number}:{code}",
+        )
+        for code in ADMIN_STATUS_BUTTONS
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=[buttons[:2], buttons[2:]])
+
+
+def client_status_text(stored: StoredOrder, bakery: Bakery | None, tz: timezone) -> str:
+    n = stored.number
+    where = escape(bakery.address) if bakery else "в выбранной пекарне"
+    when = f" {pickup_label(datetime.fromtimestamp(stored.pickup_at, tz), datetime.now(tz))}" if stored.pickup_at else ""
+    return {
+        "accepted": f"✅ Заказ №{n} принят. Ждём вас{when}: <b>{where}</b>",
+        "cooking": f"👩‍🍳 Заказ №{n} готовится.",
+        "ready": f"🥐 Заказ №{n} готов, ждём вас: <b>{where}</b>",
+        "cancelled": f"❌ Заказ №{n} отменён. Если это ошибка, оформите заказ заново через меню.",
+    }.get(stored.status, f"Заказ №{n}: {status_label(stored.status)}")
+
+
+def orders_text(orders: list[StoredOrder], bakeries: dict[str, Bakery], tz: timezone) -> str:
+    if not orders:
+        return f"У вас пока нет заказов. Нажмите <b>{MENU_BUTTON_TEXT}</b> внизу, чтобы сделать первый."
+    now = datetime.now(tz)
+    blocks = ["📋 <b>Ваши последние заказы</b>"]
+    for o in orders:
+        bakery = bakeries.get(o.bakery_id)
+        when = pickup_label(datetime.fromtimestamp(o.pickup_at, tz), now) if o.pickup_at else \
+            datetime.fromtimestamp(o.created_at, tz).strftime("%d.%m")
+        lines = [f"<b>№{o.number}</b> · {status_label(o.status)}"]
+        if o.summary:
+            lines.append(escape(o.summary))
+        lines.append(f"{money(o.total)} · самовывоз {when}")
+        if bakery:
+            lines.append(f"📍 {escape(bakery.address)}")
+        blocks.append("\n".join(lines))
+    return "\n\n".join(blocks)
 
 
 def format_uptime(seconds: float) -> str:
@@ -277,7 +343,7 @@ def build_router(config: Config, menu: Menu, bakeries: dict[str, Bakery], storag
         await message.answer(
             "🩺 <b>Бот работает</b>\n"
             f"Аптайм: {format_uptime(time.monotonic() - started_at)}\n"
-            f"Заказов сегодня: {today_count} на {money(today_sum)}\n"
+            f"Заказов сегодня (без отменённых): {today_count} на {money(today_sum)}\n"
             f"Последний номер: {storage.last_number() or 'заказов ещё не было'}\n"
             f"Меню: {len(menu.items)} позиций, версия {escape(menu.version)}\n"
             f"Пекарен: {len(bakeries)}\n"
@@ -312,16 +378,72 @@ def build_router(config: Config, menu: Menu, bakeries: dict[str, Bakery], storag
             await message.answer(e.user_message, reply_markup=keyboard)
             return
 
-        number = storage.add_order(user_id, order.total, order.bakery.id, raw)
+        summary = ", ".join(f"{line.title} × {line.qty}" for line in order.lines)
+        number = storage.add_order(user_id, order.total, order.bakery.id, raw, chat_id=message.chat.id,
+                                   summary=summary, pickup_at=order.pickup.timestamp())
         log.info("Заказ №%s от %s на %s, %s", number, user_id, order.total, order.bakery.id)
         await message.answer(receipt_text(order, number, now), reply_markup=keyboard)
 
         if config.admin_chat_id is not None:
             try:
-                await bot.send_message(config.admin_chat_id, admin_text(order, number, message, now))
+                base = admin_text(order, number, message, now)
+                storage.set_admin_text(number, base)
+                stored = storage.get_order(number)
+                await bot.send_message(config.admin_chat_id, f"{base}\n\n{status_line(stored, menu.tz)}",
+                                       reply_markup=admin_keyboard(number, stored.status))
             except Exception:
                 # Клиент уже получил чек, ошибка уведомления админа не должна это ломать
                 log.exception("Не удалось отправить заказ №%s админу %s", number, config.admin_chat_id)
+
+    @router.message(Command("orders"))
+    async def my_orders(message: Message) -> None:
+        user_id = message.from_user.id if message.from_user else message.chat.id
+        await message.answer(orders_text(storage.user_orders(user_id, 5), bakeries, menu.tz), reply_markup=keyboard)
+
+    @router.callback_query(F.data.startswith(f"{STATUS_CALLBACK}:"))
+    async def change_status(callback: CallbackQuery, bot: Bot) -> None:
+        admin = config.admin_chat_id
+        chat_id = callback.message.chat.id if callback.message else None
+        if admin is None or (callback.from_user.id != admin and chat_id != admin):
+            log.warning("Попытка сменить статус не админом: %s", callback.from_user.id)
+            await callback.answer("Менять статус может только администратор", show_alert=True)
+            return
+        try:
+            _, number_s, status = callback.data.split(":")
+            number = int(number_s)
+        except ValueError:
+            await callback.answer("Неизвестная кнопка")
+            return
+        stored = storage.get_order(number)
+        if stored is None or status not in ADMIN_STATUS_BUTTONS:
+            await callback.answer("Заказ или статус не найден", show_alert=True)
+            return
+        if stored.status == status:
+            await callback.answer(f"Уже: {STATUSES[status][1]}")
+            return
+
+        stored = storage.set_status(number, status)
+        log.info("Заказ №%s: статус %s (админ %s)", number, status, callback.from_user.id)
+        # Перерисовываем копию у админа: исходный текст + новый статус и время
+        if isinstance(callback.message, Message) and stored.admin_text:
+            try:
+                await callback.message.edit_text(f"{stored.admin_text}\n\n{status_line(stored, menu.tz)}",
+                                                 reply_markup=admin_keyboard(number, status))
+            except TelegramBadRequest as e:
+                log.warning("Не удалось обновить сообщение заказа №%s: %s", number, e)
+
+        delivered = True
+        if stored.chat_id is not None:
+            try:
+                await bot.send_message(stored.chat_id, client_status_text(stored, bakeries.get(stored.bakery_id), menu.tz))
+            except (TelegramForbiddenError, TelegramBadRequest) as e:
+                delivered = False
+                log.warning("Гость заказа №%s не получил статус: %s", number, e)
+        if delivered:
+            await callback.answer(f"№{number}: {STATUSES[status][1]}")
+        else:
+            await callback.answer(f"Статус сохранён, но гость не получил сообщение (возможно, заблокировал бота)",
+                                  show_alert=True)
 
     @router.message()
     async def fallback(message: Message) -> None:

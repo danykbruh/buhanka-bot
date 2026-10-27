@@ -64,6 +64,36 @@
     set(key, val) { try { localStorage.setItem(key, val); } catch { /* приватный режим */ } },
   };
 
+  // CloudStorage Telegram (6.9+) синхронизируется между устройствами гостя.
+  // Ключи только из A-Z, a-z, 0-9, _ и -, значение до 4096 символов.
+  // Копия всегда пишется в localStorage: это запасной вариант, если облака нет или оно не ответило.
+  const CLOUD_TIMEOUT = 2000;
+  const CLOUD_VALUE_MAX = 4096;
+  const cloud = {
+    get available() { return tgAtLeast("6.9") && !!tg.CloudStorage; },
+    get(key) {
+      const local = store.get(key);
+      if (!this.available) return Promise.resolve(local);
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => resolve(local), CLOUD_TIMEOUT);
+        try {
+          tg.CloudStorage.getItem(key, (err, value) => { clearTimeout(timer); resolve(err || !value ? local : value); });
+        } catch { clearTimeout(timer); resolve(local); }
+      });
+    },
+    // cloudValue - что отдать облаку, если оно отличается от локальной копии; null - облако не трогать
+    set(key, value, cloudValue = value) {
+      store.set(key, value);
+      if (!this.available || cloudValue == null || cloudValue.length > CLOUD_VALUE_MAX) return Promise.resolve(false);
+      return new Promise((resolve) => {
+        const timer = setTimeout(() => resolve(false), CLOUD_TIMEOUT);
+        try {
+          tg.CloudStorage.setItem(key, cloudValue, (err) => { clearTimeout(timer); resolve(!err); });
+        } catch { clearTimeout(timer); resolve(false); }
+      });
+    },
+  };
+
   const ICON = {
     plus: '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" d="M12 5v14M5 12h14"/></svg>',
     minus: '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" d="M5 12h14"/></svg>',
@@ -228,7 +258,10 @@
     fallbackBtn: $("#fallbackBtn"),
     toast: $("#toast"),
     headerCart: $("#headerCart"),
+    headerOrders: $("#headerOrders"),
     cartBadge: $("#cartBadge"),
+    orders: $("#ordersScreen"),
+    ordersBody: $("#ordersBody"),
     bakery: $("#bakeryScreen"),
     bakeryPick: $("#bakeryPick"),
     bakeryHint: $("#bakeryHint"),
@@ -239,6 +272,84 @@
   };
 
   let query = "";
+
+  // ---------- Избранное ----------
+  const KEY_FAV = "buhanka_fav";
+  const FAV_CAT = { id: "fav", title: "Избранное", tab: "Избранное" };
+  const parseIds = (raw) => {
+    try {
+      const ids = JSON.parse(raw || "[]");
+      return Array.isArray(ids) ? ids.filter((id) => byId.has(id)) : [];
+    } catch { return []; }
+  };
+  let favorites = new Set(parseIds(store.get(KEY_FAV)));
+  const isFav = (id) => favorites.has(id);
+  // Вкладка "Избранное" первой и только если в избранном что-то есть
+  const tabCats = () => (favorites.size && !query ? [FAV_CAT, ...categories] : categories);
+
+  const heartIcon = (on) => `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="${on ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M12 20.3s-7.4-4.5-9.1-9.2C1.8 8 3.9 4.6 7.3 4.6c2 0 3.6 1.1 4.7 2.7 1.1-1.6 2.7-2.7 4.7-2.7 3.4 0 5.5 3.4 4.4 6.5-1.7 4.7-9.1 9.2-9.1 9.2Z"/></svg>`;
+  const favLabel = (item, on) => `${on ? "Убрать из избранного" : "В избранное"}: ${item.title}`;
+
+  function favBtnHtml(item, cls) {
+    const on = isFav(item.id);
+    return `<button type="button" class="${cls}" data-fav="${item.id}" aria-pressed="${on}" aria-label="${esc(favLabel(item, on))}">${heartIcon(on)}</button>`;
+  }
+
+  function toggleFav(id) {
+    const item = byId.get(id);
+    if (!item) return;
+    if (favorites.has(id)) favorites.delete(id);
+    else favorites.add(id);
+    const on = favorites.has(id);
+    haptic.impact(on ? "medium" : "light");
+    cloud.set(KEY_FAV, JSON.stringify([...favorites]));
+    favoritesChanged(id);
+    toast(on ? `${item.title} - в избранном` : "Убрали из избранного");
+  }
+
+  // Обновляет сердечки, вкладку и раздел "Избранное", не сдвигая карточку, на которую смотрит гость
+  function favoritesChanged(anchorId) {
+    $$("[data-fav]").forEach((b) => {
+      const on = isFav(b.dataset.fav);
+      b.setAttribute("aria-pressed", String(on));
+      b.setAttribute("aria-label", favLabel(byId.get(b.dataset.fav), on));
+      b.innerHTML = heartIcon(on);
+    });
+    if (query) return;
+    const anchor = anchorId ? $(`.section[data-cat]:not(#sec-fav) .card[data-id="${anchorId}"]`, els.sections) : null;
+    const before = anchor ? anchor.getBoundingClientRect().top : 0;
+    renderTabs();
+    renderFavSection();
+    if (anchor) window.scrollBy(0, anchor.getBoundingClientRect().top - before);
+    updateActiveTab();
+  }
+
+  function favSectionHtml() {
+    const list = items.filter((it) => favorites.has(it.id));
+    return `<section class="section" id="sec-fav" data-cat="fav">
+      <h2 class="section__title">Избранное</h2>
+      <div class="grid">${list.map(cardHtml).join("")}</div>
+    </section>`;
+  }
+
+  function renderFavSection() {
+    const existing = $("#sec-fav");
+    if (!favorites.size) {
+      if (existing) existing.remove();
+      return;
+    }
+    if (existing) existing.outerHTML = favSectionHtml();
+    else els.sections.insertAdjacentHTML("afterbegin", favSectionHtml());
+    markLoadedImages($("#sec-fav"));
+  }
+
+  // Сердечко ловим на погружении, чтобы клик не открыл карточку товара
+  document.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-fav]");
+    if (!btn) return;
+    e.stopPropagation();
+    toggleFav(btn.dataset.fav);
+  }, true);
 
   function ctrlHtml(item) {
     const qty = itemQty(item.id);
@@ -259,6 +370,7 @@
       <div class="media">
         <img src="${imgSrc(item.id)}" alt="" loading="lazy" decoding="async" width="400" height="300">
         ${item.badge ? `<span class="badge">${esc(item.badge)}</span>` : ""}
+        ${favBtnHtml(item, "fav-btn")}
       </div>
       <div class="card__body">
         <h3 class="card__title">${esc(item.title)}</h3>
@@ -272,8 +384,12 @@
   }
 
   function renderTabs() {
-    els.tabs.innerHTML = categories
-      .map((c, i) => `<button class="tab${i === 0 ? " is-active" : ""}" type="button" data-cat="${c.id}">${esc(c.tab || c.title)}</button>`)
+    const active = $(".tab.is-active", els.tabs);
+    const activeCat = active ? active.dataset.cat : null;
+    const cats = tabCats();
+    const current = cats.some((c) => c.id === activeCat) ? activeCat : cats[0].id;
+    els.tabs.innerHTML = cats
+      .map((c) => `<button class="tab${c.id === current ? " is-active" : ""}${c.id === "fav" ? " tab--fav" : ""}" type="button" data-cat="${c.id}">${c.id === "fav" ? heartIcon(true) : ""}${esc(c.tab || c.title)}</button>`)
       .join("");
   }
 
@@ -289,7 +405,8 @@
     } else {
       els.tabs.hidden = false;
       els.searchEmpty.hidden = true;
-      els.sections.innerHTML = categories
+      renderTabs();
+      els.sections.innerHTML = (favorites.size ? favSectionHtml() : "") + categories
         .map((c) => {
           const list = items.filter((it) => it.cat === c.id);
           return `<section class="section" id="sec-${c.id}" data-cat="${c.id}">
@@ -404,13 +521,14 @@
     els.tabs.classList.toggle("is-stuck", tabsTop <= 0 && window.scrollY > 0);
     if (query || Date.now() < spyLockUntil) return;
     const line = els.tabs.offsetHeight + 24;
-    let current = categories[0].id;
+    const cats = tabCats();
+    let current = cats[0].id;
     $$(".section[data-cat]", els.sections).forEach((s) => {
       if (s.getBoundingClientRect().top <= line) current = s.dataset.cat;
     });
     // Долистали до конца - активна последняя категория
     if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 4) {
-      current = categories[categories.length - 1].id;
+      current = cats[cats.length - 1].id;
     }
     setActiveTab(current);
   }
@@ -423,7 +541,7 @@
   }, { passive: true });
 
   // ---------- Навигация между экранами ----------
-  const screens = { product: els.product, cart: els.cart, checkout: els.checkout, bakery: els.bakery };
+  const screens = { product: els.product, cart: els.cart, checkout: els.checkout, bakery: els.bakery, orders: els.orders };
   const stack = [];
   const top = () => stack[stack.length - 1] || "catalog";
 
@@ -518,6 +636,11 @@
         if (cart.length) setMain(`Отправить заказ - ${money(total)}`, submitOrder, !!selectedBakery);
         else setMain("");
         break;
+      case "bakery":
+      case "orders":
+        // На этих экранах своя основная кнопка не нужна: выбор и "Повторить" внутри списка
+        setMain("");
+        break;
       default:
         if (cart.length) setMain(`Корзина (${cartCount()}) - ${money(total)}`, () => { haptic.impact("medium"); openCart(); });
         else setMain("");
@@ -592,6 +715,7 @@
       <div class="product__media">
         <img src="${imgSrc(item.id)}" alt="${esc(item.title)}" decoding="async" width="800" height="600">
         <button class="product__close" type="button" data-back aria-label="Закрыть">${ICON.close}</button>
+        ${favBtnHtml(item, "product__fav")}
       </div>
       <div class="product__content">
         <h2 class="product__title" id="productTitle">${esc(item.title)}</h2>
@@ -805,12 +929,14 @@
   // ---------- Пекарни ----------
   const BAKERIES = window.BAKERIES || [];
   const bakeryById = new Map(BAKERIES.map((b) => [b.id, b]));
-  const STORAGE_BAKERY = "buhanka.bakery.v1";
+  // В ключах CloudStorage точки запрещены, поэтому ключ с подчёркиванием. Старый локальный ключ читаем для переноса
+  const KEY_BAKERY = "buhanka_bakery";
+  const OLD_KEY_BAKERY = "buhanka.bakery.v1";
   const bakeryCities = Object.entries(BAKERIES.reduce((m, b) => ((m[b.city] = (m[b.city] || 0) + 1), m), {}))
     .sort((a, b) => b[1] - a[1])
     .map(([city, count]) => ({ city, count }));
 
-  let selectedBakery = bakeryById.get(store.get(STORAGE_BAKERY)) || null;
+  let selectedBakery = bakeryById.get(store.get(KEY_BAKERY) || store.get(OLD_KEY_BAKERY)) || null;
   let bakeryCity = selectedBakery ? selectedBakery.city : (bakeryCities[0] || {}).city;
   let bakeryQuery = "";
   let userPos = null; // { lat, lng } после "Ближайшая ко мне"
@@ -916,10 +1042,7 @@
   function selectBakery(b) {
     selectedBakery = b;
     bakeryCity = b.city;
-    store.set(STORAGE_BAKERY, b.id);
-    if (tgAtLeast("6.9")) {
-      try { tg.CloudStorage.setItem(STORAGE_BAKERY, b.id); } catch { /* нет CloudStorage */ }
-    }
+    cloud.set(KEY_BAKERY, b.id);
     bakeryChanged();
   }
 
@@ -1111,7 +1234,7 @@
 
   let orderSent = false;
 
-  function submitOrder() {
+  async function submitOrder() {
     if (orderSent) return;
     if (!selectedBakery) {
       haptic.notify("error");
@@ -1154,12 +1277,15 @@
     }
 
     store.set(STORAGE_NAME, name);
+    const entry = historyEntry();
 
     if (canSendData) {
       if (orderSent) return; // защита от двойного нажатия, пока Telegram закрывает мини-апп
       orderSent = true;
       setMain("Отправляем...", null, false);
       haptic.notify("success");
+      // sendData сразу закрывает мини-апп, поэтому сначала дожидаемся записи истории (не дольше CLOUD_TIMEOUT)
+      await addHistory(entry);
       cart = [];
       saveCart();
       tg.sendData(json); // Telegram закроет мини-апп и передаст данные боту
@@ -1173,16 +1299,168 @@
     }
     // Обычный браузер: демо-режим
     console.log("Заказ (демо, в Telegram уйдёт через sendData):", order);
-    toast("Демо: заказ собран, JSON в консоли");
+    addHistory(entry);
+    toast("Демо: заказ собран, JSON в консоли, копия в \"Моих заказах\"");
+  }
+
+  // ---------- Мои заказы: история и "Повторить" ----------
+  // Храним состав последних заказов: [id, опции, количество, название на момент заказа].
+  // Название нужно, чтобы показать позицию, даже если её убрали из меню.
+  const KEY_HISTORY = "buhanka_history";
+  const HISTORY_MAX = 10;
+
+  const parseHistory = (raw) => {
+    try {
+      const list = JSON.parse(raw || "[]");
+      return Array.isArray(list) ? list.filter((h) => h && typeof h.t === "number" && Array.isArray(h.i)) : [];
+    } catch { return []; }
+  };
+  const mergeHistory = (...lists) => {
+    const byTime = new Map();
+    lists.flat().forEach((h) => byTime.set(h.t, h));
+    return [...byTime.values()].sort((a, b) => b.t - a.t).slice(0, HISTORY_MAX);
+  };
+  let history = parseHistory(store.get(KEY_HISTORY));
+
+  function historyEntry() {
+    return {
+      t: Date.now(),
+      s: cartTotal(),
+      b: selectedBakery ? selectedBakery.id : null,
+      i: cart.map((l) => [l.id, l.opts, l.qty, byId.get(l.id).title]),
+    };
+  }
+
+  function addHistory(entry) {
+    history = mergeHistory([entry], history);
+    // В облако влезает 4096 символов: если все заказы не помещаются, отдаём ему самые свежие
+    const forCloud = history.slice();
+    while (forCloud.length > 1 && JSON.stringify(forCloud).length > CLOUD_VALUE_MAX) forCloud.pop();
+    return cloud.set(KEY_HISTORY, JSON.stringify(history), JSON.stringify(forCloud));
+  }
+
+  // Подходят ли сохранённые опции к текущему меню
+  function optsCompatible(item, opts) {
+    if (!opts || typeof opts !== "object") return false;
+    const groups = groupsOf(item);
+    const known = Object.keys(opts).every((k) => groups.some((g) => g.id === k && (opts[k] == null || choiceOf(g, opts[k]))));
+    return known && optsValid(item, opts);
+  }
+
+  const lineAvailable = ([id, opts]) => byId.has(id) && optsCompatible(byId.get(id), opts);
+
+  function formatOrderDate(t) {
+    const d = new Date(t);
+    const day = d.toLocaleDateString("ru-RU", { day: "numeric", month: "long" });
+    return `${day}, ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  }
+
+  function openOrders() {
+    renderOrders();
+    open("orders");
+  }
+
+  function renderOrders() {
+    if (!history.length) {
+      els.ordersBody.innerHTML = `<div class="empty">
+        <div class="empty__icon" aria-hidden="true">🧾</div>
+        <p class="empty__title">Здесь появятся ваши заказы</p>
+        <p class="empty__text">После оформления заказ сохранится здесь, и его можно будет повторить в одно нажатие</p>
+        <button class="primary-btn" type="button" data-back>В меню</button>
+      </div>`;
+      return;
+    }
+    els.ordersBody.innerHTML = `
+      <p class="orders-hint">Статусы заказов бот присылает в чат. Список с номерами: команда /orders</p>
+      ${history.map((h) => {
+        const bakery = h.b && bakeryById.get(h.b);
+        const gone = h.i.filter((line) => !lineAvailable(line)).length;
+        return `<article class="past">
+          <div class="past__head">
+            <span class="past__date">${esc(formatOrderDate(h.t))}</span>
+            <span class="past__sum">${money(h.s)}</span>
+          </div>
+          ${bakery ? `<div class="past__where">${ICON_PIN}<span>${esc(shortAddress(bakery))}</span></div>` : ""}
+          <ul class="past__items">
+            ${h.i.map((line) => {
+              const [id, opts, qty, title] = line;
+              const item = byId.get(id);
+              const ok = lineAvailable(line);
+              const label = item && ok ? optsLabel(item, opts) : "";
+              return `<li class="${ok ? "" : "is-gone"}">
+                <span>${esc(item ? item.title : title || id)} × ${qty}</span>
+                ${ok ? (label ? `<small>${esc(label)}</small>` : "") : `<small>${item ? "изменились опции" : "больше нет в меню"}</small>`}
+              </li>`;
+            }).join("")}
+          </ul>
+          <button type="button" class="past__repeat" data-repeat="${h.t}" ${gone === h.i.length ? "disabled" : ""}>
+            ${gone === h.i.length ? "Этих позиций больше нет в меню" : "Повторить"}
+          </button>
+        </article>`;
+      }).join("")}
+      <div class="cart-pad"></div>`;
+  }
+
+  function repeatOrder(t) {
+    const h = history.find((x) => x.t === t);
+    if (!h) return;
+    let added = 0;
+    const skipped = [];
+    for (const line of h.i) {
+      const [id, opts, qty, title] = line;
+      if (!lineAvailable(line)) { skipped.push(byId.get(id) ? byId.get(id).title : title || id); continue; }
+      if (addToCart(id, opts, qty)) added++;
+    }
+    if (!added) {
+      haptic.notify("error");
+      toast("Не получилось: этих позиций больше нет в меню", 3500);
+      return;
+    }
+    haptic.notify("success");
+    back();
+    openCart();
+    toast(skipped.length
+      ? `Добавили в корзину. Не нашли в меню: ${skipped.join(", ")}`
+      : "Добавили в корзину то же, что в прошлый раз", skipped.length ? 4500 : 2200);
+  }
+
+  els.ordersBody.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-repeat]");
+    if (btn && !btn.disabled) repeatOrder(Number(btn.dataset.repeat));
+  });
+  els.headerOrders.addEventListener("click", () => {
+    haptic.impact("light");
+    openOrders();
+  });
+
+  // Избранное, историю и пекарню с другого устройства подтягиваем из облака после первого рендера
+  async function syncFromCloud() {
+    if (!cloud.available) return;
+    const [favRaw, historyRaw, bakeryId] = await Promise.all([cloud.get(KEY_FAV), cloud.get(KEY_HISTORY), cloud.get(KEY_BAKERY)]);
+    const cloudFavs = parseIds(favRaw);
+    if (favRaw && cloudFavs.join() !== [...favorites].join()) {
+      favorites = new Set(cloudFavs);
+      store.set(KEY_FAV, JSON.stringify(cloudFavs));
+      favoritesChanged();
+    }
+    history = mergeHistory(parseHistory(historyRaw), history);
+    store.set(KEY_HISTORY, JSON.stringify(history));
+    if (top() === "orders") renderOrders();
+    if (!selectedBakery && bakeryById.has(bakeryId)) {
+      selectedBakery = bakeryById.get(bakeryId);
+      bakeryCity = selectedBakery.city;
+      store.set(KEY_BAKERY, bakeryId);
+      bakeryChanged();
+    }
   }
 
   // ---------- Тост ----------
   let toastTimer = 0;
-  function toast(text) {
+  function toast(text, duration = 2200) {
     els.toast.textContent = text;
     els.toast.classList.add("is-shown");
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => els.toast.classList.remove("is-shown"), 2200);
+    toastTimer = setTimeout(() => els.toast.classList.remove("is-shown"), duration);
   }
 
   // ---------- Тема ----------
@@ -1216,18 +1494,8 @@
       if (tgAtLeast("6.1")) tg.BackButton.onClick(back);
       tg.onEvent("themeChanged", applyTheme);
       applyTheme();
-      // Пекарня из облачного хранилища Telegram, если локально её нет (другое устройство)
-      if (!selectedBakery && tgAtLeast("6.9")) {
-        tg.CloudStorage.getItem(STORAGE_BAKERY, (err, id) => {
-          if (!err && bakeryById.has(id) && !selectedBakery) {
-            selectedBakery = bakeryById.get(id);
-            bakeryCity = selectedBakery.city;
-            store.set(STORAGE_BAKERY, id);
-            bakeryChanged();
-          }
-        });
-      }
     }
+    syncFromCloud();
     syncMainButton();
     updateCartBadge();
   }
