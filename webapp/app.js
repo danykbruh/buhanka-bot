@@ -122,6 +122,7 @@
     if (top() === "cart") renderCart();
     if (top() === "checkout") renderSummary();
     syncMainButton();
+    updateCartBadge();
   }
 
   // ---------- Каталог ----------
@@ -145,6 +146,8 @@
     fallbackBar: $("#fallbackBar"),
     fallbackBtn: $("#fallbackBtn"),
     toast: $("#toast"),
+    headerCart: $("#headerCart"),
+    cartBadge: $("#cartBadge"),
   };
 
   let query = "";
@@ -381,8 +384,9 @@
   // ---------- Главная кнопка (MainButton / запасная кнопка в браузере) ----------
   let mainAction = null;
 
-  function accentColor() {
-    return getComputedStyle(document.documentElement).getPropertyValue("--accent").trim() || "#c2651a";
+  // Цвета палитры для системных элементов Telegram берутся из CSS-переменных
+  function cssColor(name, fallback) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || fallback;
   }
 
   function setMain(text, action, active = true) {
@@ -390,7 +394,13 @@
     if (inTg) {
       const mb = tg.MainButton;
       if (!text) { mb.hide(); return; }
-      mb.setParams({ text, color: accentColor(), text_color: "#ffffff", is_active: active, is_visible: true });
+      mb.setParams({
+        text,
+        color: cssColor("--accent", "#B5562B"),
+        text_color: cssColor("--on-accent", "#FFFFFF"),
+        is_active: active,
+        is_visible: true,
+      });
     } else {
       els.fallbackBar.hidden = !text;
       document.body.classList.toggle("has-fallback", !!text);
@@ -426,6 +436,27 @@
   }
 
   els.fallbackBtn.addEventListener("click", runMain);
+
+  // ---------- Корзина в шапке ----------
+  let badgeCount = cartCount();
+
+  function updateCartBadge() {
+    const count = cartCount();
+    els.cartBadge.hidden = !count;
+    els.cartBadge.textContent = count > 99 ? "99+" : count;
+    els.headerCart.setAttribute("aria-label", count ? `Корзина, ${count} шт` : "Корзина");
+    if (count > badgeCount) {
+      els.cartBadge.classList.remove("is-bumped");
+      void els.cartBadge.offsetWidth; // перезапуск анимации
+      els.cartBadge.classList.add("is-bumped");
+    }
+    badgeCount = count;
+  }
+
+  els.headerCart.addEventListener("click", () => {
+    haptic.impact("light");
+    openCart();
+  });
 
   // ---------- Экран товара ----------
   let product = null; // { item, opts, qty }
@@ -750,12 +781,13 @@
   function applyTheme() {
     if (!inTg) return;
     document.documentElement.dataset.theme = tg.colorScheme === "dark" ? "dark" : "light";
+    const bg = cssColor("--bg", "#F6EFE4");
     try {
-      if (tgAtLeast("6.1")) {
-        tg.setHeaderColor("secondary_bg_color");
-        tg.setBackgroundColor("secondary_bg_color");
-      }
-      if (tgAtLeast("7.10")) tg.setBottomBarColor("secondary_bg_color");
+      // Произвольный цвет шапки поддерживается с 6.9, раньше только ключи темы
+      if (tgAtLeast("6.9")) tg.setHeaderColor(bg);
+      else if (tgAtLeast("6.1")) tg.setHeaderColor("bg_color");
+      if (tgAtLeast("6.1")) tg.setBackgroundColor(bg);
+      if (tgAtLeast("7.10")) tg.setBottomBarColor(bg);
     } catch { /* старые клиенты */ }
     syncMainButton(); // цвет акцента зависит от темы
   }
@@ -776,6 +808,7 @@
       applyTheme();
     }
     syncMainButton();
+    updateCartBadge();
   }
 
   // Для отладки в консоли
