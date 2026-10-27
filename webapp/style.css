@@ -30,6 +30,12 @@
   --banner-sub: #5A5A5A;
   --badge-bg: #FED36B;
   --badge-text: #242424;
+  --icon-circle-bg: #FCF7ED;
+  --st-new-bg: #EDEDED; --st-new: #474747;
+  --st-accepted-bg: #E3ECF6; --st-accepted: #2B4C73;
+  --st-cooking-bg: #FFF1CC; --st-cooking: #664A00;
+  --st-ready-bg: #E1F0E4; --st-ready: #2A5E36;
+  --st-cancelled-bg: #F6E3E0; --st-cancelled: #8A3226;
 
   --font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
   --font-display: "Oswald", "Arial Narrow", "Roboto Condensed", Arial, sans-serif;
@@ -61,6 +67,12 @@
     --banner-bg: #242424;
     --banner-text: #F5F2EA;
     --banner-sub: #B3B0A8;
+    --icon-circle-bg: #2E2E2E;
+    --st-new-bg: #333333; --st-new: #D2D2D2;
+    --st-accepted-bg: #22303F; --st-accepted: #AAC6E6;
+    --st-cooking-bg: #3A321F; --st-cooking: #F2D68C;
+    --st-ready-bg: #213428; --st-ready: #A0D4AF;
+    --st-cancelled-bg: #3D2522; --st-cancelled: #F0AA9E;
     color-scheme: dark;
   }
 }
@@ -84,6 +96,12 @@
   --banner-bg: #242424;
   --banner-text: #F5F2EA;
   --banner-sub: #B3B0A8;
+  --icon-circle-bg: #2E2E2E;
+  --st-new-bg: #333333; --st-new: #D2D2D2;
+  --st-accepted-bg: #22303F; --st-accepted: #AAC6E6;
+  --st-cooking-bg: #3A321F; --st-cooking: #F2D68C;
+  --st-ready-bg: #213428; --st-ready: #A0D4AF;
+  --st-cancelled-bg: #3D2522; --st-cancelled: #F0AA9E;
   color-scheme: dark;
 }
 
@@ -216,7 +234,8 @@ h1, h2, h3, p { margin: 0; }
 }
 .media img.is-loaded { opacity: 1; }
 .media.is-broken::after {
-  content: "🥐"; position: absolute; inset: 0; display: grid; place-items: center; font-size: 32px; opacity: .5;
+  content: ""; position: absolute; inset: 0; opacity: .35;
+  background: center / 40px no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Cpath fill='none' stroke='%23242424' stroke-width='2' stroke-linejoin='round' d='M8 18c0-5 5-9 12-9s12 4 12 9c0 2-1 3-2 4v8a2 2 0 0 1-2 2H12a2 2 0 0 1-2-2v-8c-1-1-2-2-2-4Z'/%3E%3C/svg%3E");
 }
 .badge {
   position: absolute; left: 8px; top: 8px;
@@ -593,29 +612,86 @@ body.has-fallback .product__note { padding-bottom: calc(96px + var(--safe-bottom
 .tab--fav.is-active svg { color: inherit; }
 
 /* ============ Мои заказы ============ */
-.orders-hint { margin: 0 var(--gutter) 12px; font-size: 13px; color: var(--hint); }
+.screen__title--lg { font-size: 28px; }
+.orders-hint { margin: 4px var(--gutter) 0; font-size: 12.5px; line-height: 1.4; color: var(--hint); text-align: center; }
+
+/* Круг с линейной иконкой: пустые состояния */
+.icon-circle {
+  width: 96px; height: 96px; margin: 0 auto 16px; border-radius: 50%;
+  display: grid; place-items: center; background: var(--icon-circle-bg); color: var(--text);
+}
+
+/* Пустое состояние: обычный поток с отступом 24px; по центру экрана, только если нет ленты */
+.orders-empty { display: flex; flex-direction: column; padding: 24px var(--gutter) calc(24px + var(--safe-bottom)); }
+.orders-empty.is-centered { min-height: calc(100vh - 72px); justify-content: center; }
+.orders-empty__main { display: flex; flex-direction: column; align-items: center; text-align: center; }
+.orders-empty__title { font-family: var(--font); font-weight: 600; font-size: 20px; line-height: 1.25; }
+.orders-empty__text {
+  margin-top: 8px; font-size: 15px; line-height: 1.45; color: var(--hint);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.cta-btn {
+  display: block; width: 100%; height: 48px; margin-top: 24px; border-radius: 14px;
+  font-family: var(--font); font-weight: 600; font-size: 16px;
+  background: var(--accent-fill); color: var(--on-accent); box-shadow: none;
+}
+.cta-btn:active { background: var(--accent-fill-press); }
+.try { margin-top: 32px; }
+.try__title { font-family: var(--font); font-weight: 600; font-size: 17px; margin-bottom: 8px; }
+.try__list { margin: 0 calc(-1 * var(--gutter)); }
+
+/* Штампы за кофе */
+.stamps {
+  margin: 0 var(--gutter) 14px; padding: 14px 16px 12px; border-radius: 20px;
+  background: var(--card); box-shadow: var(--shadow-sm);
+}
+.orders-empty .stamps { margin: 0 0 24px; }
+.stamps__head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.stamps__title { font-family: var(--font); font-weight: 600; font-size: 16px; }
+.stamps__count { font-size: 14px; font-weight: 600; color: var(--hint); font-variant-numeric: tabular-nums; }
+.stamps__row { display: flex; gap: 10px; margin: 12px 0 10px; }
+.stamps__dot { width: 26px; height: 26px; border-radius: 50%; border: 2px solid var(--line); }
+.stamps__dot.is-on { background: var(--accent-fill); border-color: var(--accent-fill-press); }
+.stamps__text { font-size: 13.5px; line-height: 1.35; color: var(--hint); }
+
+/* Карточка заказа */
 .past {
   margin: 0 var(--gutter) 12px; padding: 14px 16px 16px;
   background: var(--card); border-radius: 20px; box-shadow: var(--shadow);
   animation: rise .35s var(--ease) both;
 }
-.past__head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
-.past__date { font-family: var(--font-display); font-weight: 600; font-size: 17px; }
-.past__sum { font-weight: 700; color: var(--accent); white-space: nowrap; font-variant-numeric: tabular-nums; }
-.past__where { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 13px; color: var(--hint); }
+.past__head { display: flex; justify-content: space-between; align-items: center; gap: 10px; }
+.past__meta { font-weight: 600; font-size: 14px; font-variant-numeric: tabular-nums; min-width: 0; }
+.status {
+  flex: none; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; line-height: 1.2;
+  background: var(--st-bg); color: var(--st-text);
+}
+.status--new { --st-bg: var(--st-new-bg); --st-text: var(--st-new); }
+.status--accepted { --st-bg: var(--st-accepted-bg); --st-text: var(--st-accepted); }
+.status--cooking { --st-bg: var(--st-cooking-bg); --st-text: var(--st-cooking); }
+.status--ready { --st-bg: var(--st-ready-bg); --st-text: var(--st-ready); }
+.status--cancelled { --st-bg: var(--st-cancelled-bg); --st-text: var(--st-cancelled); }
+.past__thumbs { display: flex; gap: 8px; margin-top: 12px; }
+.past__thumb {
+  flex: none; width: 52px; height: 52px; border-radius: 12px; overflow: hidden;
+  background: var(--placeholder); display: grid; place-items: center;
+}
+.past__thumb img { width: 100%; height: 100%; object-fit: cover; object-position: center 70%; }
+.past__thumb.is-gone { border: 1.5px dashed var(--line); background: transparent; }
+.past__more { font-size: 14px; font-weight: 600; color: var(--text); }
+.past__gone { margin-top: 8px; font-size: 12.5px; color: var(--hint); }
+.past__foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-top: 12px; }
+.past__where { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: 13px; color: var(--hint); }
 .past__where svg { width: 15px; height: 15px; flex: none; }
 .past__where span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.past__items { list-style: none; margin: 10px 0 0; padding: 10px 0 0; border-top: 1px solid var(--line); display: grid; gap: 6px; }
-.past__items li { font-size: 14px; line-height: 1.3; }
-.past__items small { display: block; font-size: 12px; color: var(--hint); }
-.past__items li.is-gone span { text-decoration: line-through; color: var(--hint); }
-.past__items li.is-gone small { color: var(--danger); }
+.past__sum { flex: none; font-weight: 700; font-size: 17px; color: var(--text); font-variant-numeric: tabular-nums; }
 .past__repeat {
-  width: 100%; height: 44px; margin-top: 14px; border-radius: 999px;
-  font-weight: 700; font-size: 15px; background: var(--accent-fill); color: var(--on-accent);
+  width: 100%; height: 44px; margin-top: 14px; border-radius: 14px;
+  border: 1.5px solid var(--text); background: transparent; color: var(--text);
+  font-family: var(--font); font-weight: 600; font-size: 15px;
 }
-.past__repeat:active { background: var(--accent-fill-press); }
-.past__repeat:disabled { background: var(--line); color: var(--hint); }
+.past__repeat:active { background: var(--accent-soft); }
+.past__repeat:disabled { border-color: var(--line); color: var(--hint); }
 
 /* ============ Акции: карусель ============ */
 /* Трек внутри полей экрана, слайд = вся ширина трека. Соседний слайд за краем трека, поэтому не торчит */

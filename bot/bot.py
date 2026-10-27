@@ -23,6 +23,7 @@ from datetime import datetime, timedelta, timezone
 from html import escape
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.client.default import DefaultBotProperties
@@ -253,6 +254,26 @@ def status_line(stored: StoredOrder, tz: timezone) -> str:
     return f"<b>Статус: {status_label(stored.status)}</b> · {at:%H:%M}"
 
 
+# Короткие коды статусов для адреса мини-аппа
+STATUS_CODES = {"new": "n", "accepted": "a", "cooking": "c", "ready": "r", "cancelled": "x"}
+
+
+def webapp_url_for(base: str, state: BonusState, orders: list[StoredOrder]) -> str:
+    """Адрес мини-аппа со штампами и статусами последних заказов гостя.
+
+    Мини-апп статичный и не может спросить бота, поэтому бот передаёт ему эти данные в адресе кнопки
+    "Открыть меню" и обновляет кнопку в каждом своём сообщении. Данные только для показа:
+    скидки и проверки по-прежнему считает бот. o = номер.статус.время_оформления.сумма через запятую.
+    """
+    params = [("st", str(state.stamps)), ("gift", str(state.available))]
+    if orders:
+        params.append(("o", ",".join(
+            f"{o.number}.{STATUS_CODES.get(o.status, 'n')}.{int(o.created_at)}.{o.total}" for o in orders)))
+    split = urlsplit(base)
+    query = [(k, v) for k, v in parse_qsl(split.query) if k not in ("st", "gift", "o")] + params
+    return urlunsplit(split._replace(query=urlencode(query, safe=",.")))
+
+
 def admin_keyboard(number: int, current: str) -> InlineKeyboardMarkup:
     """Кнопки статуса под копией заказа у админа, текущий статус отмечен точкой."""
     buttons = [
@@ -368,12 +389,21 @@ def build_router(config: Config, menu: Menu, bakeries: dict[str, Bakery], storag
     promos = promos or {}
     router = Router()
     duplicates = DuplicateGuard()
-    keyboard = ReplyKeyboardMarkup(
-        keyboard=[[KeyboardButton(text=MENU_BUTTON_TEXT, web_app=WebAppInfo(url=config.webapp_url))]],
-        resize_keyboard=True,
-        is_persistent=True,
-        input_field_placeholder="Нажмите кнопку, чтобы открыть меню",
-    )
+
+    def keyboard_for(user_id: int | None) -> ReplyKeyboardMarkup:
+        """Кнопка мини-аппа с актуальными штампами и статусами заказов этого гостя."""
+        url = config.webapp_url
+        if user_id is not None:
+            url = webapp_url_for(url, storage.bonus_state(user_id, menu.stamps_per_reward), storage.user_orders(user_id, 5))
+        return ReplyKeyboardMarkup(
+            keyboard=[[KeyboardButton(text=MENU_BUTTON_TEXT, web_app=WebAppInfo(url=url))]],
+            resize_keyboard=True,
+            is_persistent=True,
+            input_field_placeholder="Нажмите кнопку, чтобы открыть меню",
+        )
+
+    def guest_id(message: Message) -> int:
+        return message.from_user.id if message.from_user else message.chat.id
 
     @router.message(CommandStart())
     async def start(message: Message) -> None:
@@ -384,7 +414,7 @@ def build_router(config: Config, menu: Menu, bakeries: dict[str, Bakery], storag
             f"Нажмите <b>{MENU_BUTTON_TEXT}</b> внизу, соберите заказ и выберите, когда заберёте. "
             "Чек придёт сюда, в чат.\n\n"
             "<i>Концепт. Не является официальным сервисом пекарни Буханка.</i>",
-            reply_markup=keyboard,
+            reply_markup=keyboard_for(guest_id(message)),
         )
 
     @router.message(Command("health"), IsAdmin(config.admin_chat_id))
@@ -418,7 +448,7 @@ def build_router(config: Config, menu: Menu, bakeries: dict[str, Bakery], storag
             await message.answer(
                 f"🙏 Вы уже оформили {len(recent)} заказа за последние 10 минут. "
                 f"Новый можно будет отправить примерно через {wait_min} мин. Спасибо за понимание!",
-                reply_markup=keyboard,
+                reply_markup=keyboard_for(user_id),
             )
             return
 
@@ -430,7 +460,7 @@ def build_router(config: Config, menu: Menu, bakeries: dict[str, Bakery], storag
             pricing = price_order(order, menu, promos, now, free_coffee=bonus.available > 0)
         except OrderError as e:
             log.warning("Заказ от %s не принят: %s; data=%.300r", user_id, e, raw)
-            await message.answer(e.user_message, reply_markup=keyboard)
+            await message.answer(e.user_message, reply_markup=keyboard_for(user_id))
             return
 
         summary = ", ".join(f"{line.title} × {line.qty}" for line in order.lines)
@@ -442,7 +472,7 @@ def build_router(config: Config, menu: Menu, bakeries: dict[str, Bakery], storag
         )
         log.info("Заказ №%s от %s на %s (скидки %s + %s), %s", number, user_id, pricing.total,
                  pricing.promo_discount, pricing.bonus_discount, order.bakery.id)
-        await message.answer(receipt_text(order, pricing, number, now), reply_markup=keyboard)
+        await message.answer(receipt_text(order, pricing, number, now), reply_markup=keyboard_for(user_id))
 
         if config.admin_chat_id is not None:
             try:
@@ -458,12 +488,12 @@ def build_router(config: Config, menu: Menu, bakeries: dict[str, Bakery], storag
     @router.message(Command("bonus"))
     async def my_bonus(message: Message) -> None:
         user_id = message.from_user.id if message.from_user else message.chat.id
-        await message.answer(bonus_text(storage.bonus_state(user_id, menu.stamps_per_reward)), reply_markup=keyboard)
+        await message.answer(bonus_text(storage.bonus_state(user_id, menu.stamps_per_reward)), reply_markup=keyboard_for(user_id))
 
     @router.message(Command("orders"))
     async def my_orders(message: Message) -> None:
         user_id = message.from_user.id if message.from_user else message.chat.id
-        await message.answer(orders_text(storage.user_orders(user_id, 5), bakeries, menu.tz), reply_markup=keyboard)
+        await message.answer(orders_text(storage.user_orders(user_id, 5), bakeries, menu.tz), reply_markup=keyboard_for(user_id))
 
     @router.callback_query(F.data.startswith(f"{STATUS_CALLBACK}:"))
     async def change_status(callback: CallbackQuery, bot: Bot) -> None:
@@ -508,7 +538,7 @@ def build_router(config: Config, menu: Menu, bakeries: dict[str, Bakery], storag
                 if state.available:
                     text += "\n🎁 Следующий кофе бесплатно, бот применит подарок сам."
             try:
-                await bot.send_message(stored.chat_id, text)
+                await bot.send_message(stored.chat_id, text, reply_markup=keyboard_for(stored.user_id))
             except (TelegramForbiddenError, TelegramBadRequest) as e:
                 delivered = False
                 log.warning("Гость заказа №%s не получил статус: %s", number, e)
@@ -521,7 +551,7 @@ def build_router(config: Config, menu: Menu, bakeries: dict[str, Bakery], storag
     @router.message()
     async def fallback(message: Message) -> None:
         await message.answer(f"Чтобы сделать заказ, нажмите <b>{MENU_BUTTON_TEXT}</b> внизу экрана.",
-                             reply_markup=keyboard)
+                             reply_markup=keyboard_for(guest_id(message)))
 
     return router
 

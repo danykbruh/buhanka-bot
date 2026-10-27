@@ -902,5 +902,11 @@
         "code": "KOFE"
       }
     }
+  ],
+  "popular": [
+    "croissant-classic",
+    "cinnabon",
+    "cappuccino",
+    "syrnik"
   ]
 }

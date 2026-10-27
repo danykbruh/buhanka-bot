@@ -27,7 +27,7 @@
     } catch (err) {
       console.error("Не удалось загрузить меню:", err);
       document.getElementById("sections").innerHTML = `<div class="empty">
-        <div class="empty__icon" aria-hidden="true">🥐</div>
+        <div class="icon-circle" aria-hidden="true"><svg viewBox="0 0 56 56" width="56" height="56"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M28 12a16 16 0 1 0 16 16"/><path d="M44 12v9h-9"/></g></svg></div>
         <p class="empty__title">Не удалось загрузить меню</p>
         <p class="empty__text">Проверьте интернет и попробуйте ещё раз</p>
         <button class="primary-btn" type="button" onclick="location.reload()">Повторить</button>
@@ -877,7 +877,7 @@
     els.cartClear.hidden = !cart.length;
     if (!cart.length) {
       els.cartBody.innerHTML = `<div class="empty">
-        <div class="empty__icon" aria-hidden="true">🧺</div>
+        <div class="icon-circle">${ICON_BAG}</div>
         <p class="empty__title">Корзина пуста</p>
         <p class="empty__text">Добавьте что-нибудь вкусное из меню</p>
         <button class="primary-btn" type="button" data-back>Вернуться в меню</button>
@@ -1489,44 +1489,105 @@
     open("orders");
   }
 
+  // Данные от бота из адреса кнопки "Открыть меню": штампы и статусы последних заказов.
+  // Мини-апп статичный и не может спросить бота сам, бот обновляет адрес в каждом своём сообщении.
+  // Только для показа: скидки и проверки считает бот.
+  const STATUS_FROM_CODE = { n: "new", a: "accepted", c: "cooking", r: "ready", x: "cancelled" };
+  const STATUS_LABEL = { new: "Отправлен", accepted: "Принят", cooking: "Готовится", ready: "Готов", cancelled: "Отменён" };
+  const fromBot = (() => {
+    const q = new URLSearchParams(location.search);
+    const int = (v) => (/^\d+$/.test(v || "") ? Number(v) : null);
+    const orders = (q.get("o") || "").split(",").map((part) => {
+      const [number, code, created, total] = part.split(".");
+      return int(number) && STATUS_FROM_CODE[code] && int(created)
+        ? { number: int(number), status: STATUS_FROM_CODE[code], at: int(created) * 1000, total: int(total) }
+        : null;
+    }).filter(Boolean);
+    return { stamps: int(q.get("st")), gift: int(q.get("gift")) || 0, orders };
+  })();
+  const STAMPS_PER_REWARD = ((MENU.bonus && MENU.bonus.coffeeEvery) || 6) - 1;
+
+  // Заказ из истории мини-аппа и заказ бота - одно и то же, если оформлены в пределах 3 минут
+  function botOrderFor(h) {
+    let best = null;
+    for (const o of fromBot.orders) {
+      const gap = Math.abs(o.at - h.t);
+      if (gap <= 180000 && (!best || gap < best.gap)) best = { ...o, gap };
+    }
+    return best;
+  }
+
+  const ICON_BAG = '<svg viewBox="0 0 56 56" width="56" height="56" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 20h30l-2.4 26a3 3 0 0 1-3 2.7H18.4a3 3 0 0 1-3-2.7L13 20Z"/><path d="M21 24v-8a7 7 0 0 1 14 0v8"/><path d="M22 34c2 3 10 3 12 0"/></g></svg>';
+
+  function stampsCardHtml() {
+    if (fromBot.stamps == null || (!fromBot.stamps && !fromBot.gift)) return "";
+    const filled = fromBot.gift ? STAMPS_PER_REWARD : Math.min(fromBot.stamps, STAMPS_PER_REWARD);
+    const left = STAMPS_PER_REWARD - filled;
+    return `<section class="stamps" aria-label="Штампы за кофе">
+      <div class="stamps__head">
+        <h3 class="stamps__title">Штампы за кофе</h3>
+        <span class="stamps__count">${filled} из ${STAMPS_PER_REWARD}</span>
+      </div>
+      <div class="stamps__row" role="img" aria-label="${filled} из ${STAMPS_PER_REWARD} штампов">
+        ${Array.from({ length: STAMPS_PER_REWARD }, (_, i) => `<span class="stamps__dot${i < filled ? " is-on" : ""}"></span>`).join("")}
+      </div>
+      <p class="stamps__text">${fromBot.gift
+        ? "Следующий кофе бесплатно: бот применит подарок сам"
+        : `Ещё ${left} кофе, и следующий будет бесплатным`}</p>
+    </section>`;
+  }
+
+  function popularHtml() {
+    const list = (MENU.popular || []).map((id) => byId.get(id)).filter(Boolean).slice(0, 4);
+    if (!list.length) return "";
+    return `<section class="try">
+      <h3 class="try__title">Попробуйте</h3>
+      <div class="pairing__list try__list">${list.map(pairHtml).join("")}</div>
+    </section>`;
+  }
+
   function renderOrders() {
     if (!history.length) {
-      els.ordersBody.innerHTML = `<div class="empty">
-        <div class="empty__icon" aria-hidden="true">🧾</div>
-        <p class="empty__title">Здесь появятся ваши заказы</p>
-        <p class="empty__text">После оформления заказ сохранится здесь, и его можно будет повторить в одно нажатие</p>
-        <button class="primary-btn" type="button" data-back>В меню</button>
+      const popular = popularHtml();
+      els.ordersBody.innerHTML = `<div class="orders-empty${popular ? "" : " is-centered"}">
+        ${stampsCardHtml()}
+        <div class="orders-empty__main">
+          <div class="icon-circle">${ICON_BAG}</div>
+          <h3 class="orders-empty__title">Пока пусто</h3>
+          <p class="orders-empty__text">Оформите первый заказ, и он появится здесь. Повторить его можно будет в одно нажатие</p>
+        </div>
+        <button class="cta-btn" type="button" data-back>Перейти в меню</button>
+        ${popular}
       </div>`;
       return;
     }
     els.ordersBody.innerHTML = `
-      <p class="orders-hint">Статусы заказов бот присылает в чат. Список с номерами: команда /orders</p>
+      ${stampsCardHtml()}
       ${history.map((h) => {
         const bakery = h.b && bakeryById.get(h.b);
-        const gone = h.i.filter((line) => !lineAvailable(line)).length;
+        const bot = botOrderFor(h);
+        const available = h.i.filter(lineAvailable);
+        const gone = h.i.length - available.length;
+        const thumbs = h.i.slice(0, 4).map(([id, , qty, title]) => `<span class="past__thumb${byId.has(id) ? "" : " is-gone"}" title="${esc(title || id)} × ${qty}">
+          ${byId.has(id) ? `<img src="${imgSrc(id)}" alt="" loading="lazy" decoding="async"${imgPosAttr(byId.get(id))}>` : ""}
+        </span>`).join("");
+        const more = h.i.length > 4 ? `<span class="past__thumb past__more">+${h.i.length - 4}</span>` : "";
+        const label = h.i.map(([id, , qty, title]) => `${byId.get(id) ? byId.get(id).title : title || id} × ${qty}`).join(", ");
         return `<article class="past">
           <div class="past__head">
-            <span class="past__date">${esc(formatOrderDate(h.t))}</span>
-            <span class="past__sum">${money(h.s)}</span>
+            <span class="past__meta">${bot ? `№${bot.number} · ` : ""}${esc(formatOrderDate(h.t))}</span>
+            ${bot ? `<span class="status status--${bot.status}">${STATUS_LABEL[bot.status]}</span>` : ""}
           </div>
-          ${bakery ? `<div class="past__where">${ICON_PIN}<span>${esc(shortAddress(bakery))}</span></div>` : ""}
-          <ul class="past__items">
-            ${h.i.map((line) => {
-              const [id, opts, qty, title] = line;
-              const item = byId.get(id);
-              const ok = lineAvailable(line);
-              const label = item && ok ? optsLabel(item, opts) : "";
-              return `<li class="${ok ? "" : "is-gone"}">
-                <span>${esc(item ? item.title : title || id)} × ${qty}</span>
-                ${ok ? (label ? `<small>${esc(label)}</small>` : "") : `<small>${item ? "изменились опции" : "больше нет в меню"}</small>`}
-              </li>`;
-            }).join("")}
-          </ul>
-          <button type="button" class="past__repeat" data-repeat="${h.t}" ${gone === h.i.length ? "disabled" : ""}>
-            ${gone === h.i.length ? "Этих позиций больше нет в меню" : "Повторить"}
-          </button>
+          <div class="past__thumbs" role="img" aria-label="${esc(label)}">${thumbs}${more}</div>
+          ${gone ? `<p class="past__gone">${gone === h.i.length ? "Этих позиций больше нет в меню" : `Нет в меню: ${gone} из ${h.i.length}`}</p>` : ""}
+          <div class="past__foot">
+            <span class="past__where">${bakery ? `${ICON_PIN}<span>${esc(shortAddress(bakery))}</span>` : ""}</span>
+            <span class="past__sum">${money(bot && bot.total != null ? bot.total : h.s)}</span>
+          </div>
+          <button type="button" class="past__repeat" data-repeat="${h.t}" ${available.length ? "" : "disabled"}>Повторить</button>
         </article>`;
       }).join("")}
+      <p class="orders-hint">Статусы обновляются, когда бот присылает сообщение. Подробнее в чате: команда /orders</p>
       <div class="cart-pad"></div>`;
   }
 
@@ -1555,7 +1616,16 @@
 
   els.ordersBody.addEventListener("click", (e) => {
     const btn = e.target.closest("[data-repeat]");
-    if (btn && !btn.disabled) repeatOrder(Number(btn.dataset.repeat));
+    if (btn && !btn.disabled) { repeatOrder(Number(btn.dataset.repeat)); return; }
+    // Лента "Попробуйте": нажатие кладёт позицию в корзину
+    const pair = e.target.closest("[data-pair]");
+    if (!pair) return;
+    const item = byId.get(pair.dataset.pair);
+    if (needsChoice(item)) { openProduct(item.id); return; }
+    if (!addToCart(item.id, defaultOpts(item))) return;
+    haptic.impact("light");
+    $("[data-pair-qty]", pair).innerHTML = pairBadge(item);
+    toast(`${item.title} - в корзине`);
   });
   els.headerOrders.addEventListener("click", () => {
     haptic.impact("light");

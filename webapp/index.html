@@ -13,7 +13,7 @@
   <!-- Шрифты не блокируют запуск: если Google Fonts тормозит, меню откроется с системным шрифтом -->
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Oswald:wght@500;600&display=swap" media="print" onload="this.media='all'">
   <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Oswald:wght@500;600&display=swap"></noscript>
-  <link rel="stylesheet" href="style.css?v=20261027-3">
+  <link rel="stylesheet" href="style.css?v=20261027-4">
 </head>
 <body>
   <div id="app">
@@ -50,7 +50,7 @@
       <div id="sections"></div>
 
       <div class="empty" id="searchEmpty" hidden>
-        <div class="empty__icon" aria-hidden="true">🔍</div>
+        <div class="icon-circle" aria-hidden="true"><svg viewBox="0 0 56 56" width="56" height="56"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="25" cy="25" r="12"/><path d="m34 34 9 9"/></g></svg></div>
         <p class="empty__title">Ничего не нашлось</p>
         <p class="empty__text">Попробуйте другое слово, например "круассан" или "чай".</p>
       </div>
@@ -160,7 +160,7 @@
           <button class="nav-back" type="button" data-back aria-label="Назад">
             <svg viewBox="0 0 24 24" width="22" height="22"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M15 5l-7 7 7 7"/></svg>
           </button>
-          <h2 class="screen__title" id="ordersTitle">Мои заказы</h2>
+          <h2 class="screen__title screen__title--lg" id="ordersTitle">Мои заказы</h2>
           <span></span>
         </header>
         <div id="ordersBody"></div>
@@ -175,7 +175,7 @@
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
   </div>
 
-  <script src="bakeries.js?v=20261027-3"></script>
-  <script src="app.js?v=20261027-3"></script>
+  <script src="bakeries.js?v=20261027-4"></script>
+  <script src="app.js?v=20261027-4"></script>
 </body>
 </html>
