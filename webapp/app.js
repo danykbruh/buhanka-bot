@@ -611,9 +611,9 @@
       if (!text) { mb.hide(); return; }
       mb.setParams({
         text,
-        // Та же заливка, что у кнопок в мини-аппе: #B5562B с белым текстом в обеих темах (4.86:1)
-        color: active ? cssColor("--accent-fill", "#B5562B") : cssColor("--line", "#E8DCCB"),
-        text_color: active ? cssColor("--on-accent", "#FFFFFF") : cssColor("--hint", "#7A6656"),
+        // Та же заливка, что у кнопок в мини-аппе: фирменный жёлтый #FED36B с тёмным текстом #242424 (10.8:1)
+        color: active ? cssColor("--accent-fill", "#FED36B") : cssColor("--line", "#E5E5E5"),
+        text_color: active ? cssColor("--on-accent", "#242424") : cssColor("--hint", "#5A5A5A"),
         is_active: active,
         is_visible: true,
       });
@@ -1705,7 +1705,7 @@
   function applyTheme() {
     if (!inTg) return;
     document.documentElement.dataset.theme = tg.colorScheme === "dark" ? "dark" : "light";
-    const bg = cssColor("--bg", "#F6EFE4");
+    const bg = cssColor("--bg", "#FFFFFF");
     try {
       // Произвольный цвет шапки поддерживается с 6.9, раньше только ключи темы
       if (tgAtLeast("6.9")) tg.setHeaderColor(bg);

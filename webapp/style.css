@@ -1,86 +1,89 @@
-/* ============ Тёплая пекарня: токены ============
- * Светлая палитра по умолчанию, тёмная - по теме Telegram (data-theme на <html>)
- * или по настройке системы, если мини-апп открыт в обычном браузере.
- * Цвета шапки, фона и MainButton Telegram app.js берёт отсюда же.
+/* ============ Фирменные цвета Буханки: токены ============
+ * Палитра с сайта buhanka.ru: белый фон, кремовые блоки #FCF7ED, текст #242424, жёлтый акцент #FED36B.
+ * Жёлтый - только заливка (кнопки, активная вкладка, бейдж, точки карусели) с тёмным текстом #242424 (10.8:1).
+ * Жёлтый текст на белом нечитаем (1.4:1), поэтому цены, ссылки и иконки - цвета текста.
+ * Тёмной темы на сайте нет, она подобрана в той же гамме. Включается по теме Telegram (data-theme на <html>)
+ * или по настройке системы в обычном браузере. Цвета шапки, фона и MainButton Telegram app.js берёт отсюда же.
  */
 :root {
-  --bg: #F6EFE4;
-  --card: #FFFFFF;
-  --text: #2B1D14;
-  --hint: #7A6656;
-  --accent: #B5562B;          /* цены, иконки, рамки, точки */
-  --accent-press: #9A4520;
-  --accent-fill: #B5562B;     /* заливка под белым текстом: 4.86:1 */
-  --accent-fill-press: #9A4520;
-  --accent-ink: #9A4520;      /* мелкий акцентный текст на светлом фоне: #B5562B на #F6EFE4 даёт только 4.26:1 */
-  --line: #E8DCCB;
-  --on-accent: #FFFFFF;
-  --accent-soft: rgba(181, 86, 43, .1);
-  --glass: rgba(246, 239, 228, .82);
-  --placeholder: #EFE3D2;
+  --bg: #FFFFFF;
+  --card: #FCF7ED;
+  --text: #242424;
+  --hint: #5A5A5A;            /* на сайте #313131 с прозрачностью 80% */
+  --accent: #242424;          /* цены, иконки, рамки фокуса: жёлтый на белом не читается */
+  --accent-press: #000000;
+  --accent-fill: #FED36B;     /* фирменный жёлтый: заливка под тёмным текстом */
+  --accent-fill-press: #F2C24F;
+  --accent-ink: #242424;      /* ссылки и мелкий акцентный текст */
+  --line: #E5E5E5;
+  --on-accent: #242424;
+  --accent-soft: rgba(254, 211, 107, .32);
+  --glass: rgba(255, 255, 255, .86);
+  --placeholder: #F3ECDD;
   --danger: #C2412D;
-  --shadow: 0 6px 20px rgba(60, 30, 10, .08);
-  --shadow-sm: 0 2px 8px rgba(60, 30, 10, .06);
-  --toast-bg: #2B1D14;
-  --banner-bg: #EFE3D2;
-  --banner-text: #2B1D14;
-  --banner-sub: #66523F;
-  --toast-text: #F6EFE4;
+  --shadow: 0 6px 20px rgba(36, 36, 36, .08);
+  --shadow-sm: 0 2px 8px rgba(36, 36, 36, .06);
+  --toast-bg: #242424;
+  --toast-text: #FFFFFF;
+  --banner-bg: #FCF7ED;
+  --banner-text: #242424;
+  --banner-sub: #5A5A5A;
+  --badge-bg: #FED36B;
+  --badge-text: #242424;
 
-  --font: "Manrope", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
-  --font-display: "Lora", Georgia, "Times New Roman", serif;
+  --font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  --font-display: "Oswald", "Arial Narrow", "Roboto Condensed", Arial, sans-serif;
   --gutter: 16px;
   --ease: cubic-bezier(.22, .7, .2, 1);
   --safe-bottom: max(env(safe-area-inset-bottom, 0px), var(--tg-safe-area-inset-bottom, 0px));
   color-scheme: light;
 }
 
-/* Тёмная тема. Заливки кнопок и вкладок остаются #B5562B с белым текстом: белый на #D9864F даёт только 2.8:1.
-   #D9864F - для цен, иконок, точек и мелкого акцентного текста на тёмном фоне */
+/* Тёмная тема: та же гамма, жёлтая заливка остаётся с тёмным текстом */
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #1C1511;
-    --card: #2A201A;
-    --text: #F3E9DC;
-    --hint: #B8A592;
-    --accent: #D9864F;
-    --accent-press: #C2703B;
-    --accent-ink: #E6A06E;  /* светлее #D9864F: мелкий текст на подложке акцента >= 4.5:1 */
-    --line: #3D2F25;
-    --accent-soft: rgba(217, 134, 79, .16);
-    --glass: rgba(28, 21, 17, .8);
-    --placeholder: #33271F;
-    --danger: #E8735E;
-    --shadow: 0 6px 20px rgba(0, 0, 0, .28);
-    --shadow-sm: 0 2px 8px rgba(0, 0, 0, .2);
-    --toast-bg: #F3E9DC;
-    --banner-bg: #2A201A;
-    --banner-text: #F3E9DC;
-    --banner-sub: #B8A592;
-    --toast-text: #1C1511;
+    --bg: #1A1A1A;
+    --card: #242424;
+    --text: #F5F2EA;
+    --hint: #B3B0A8;
+    --accent: #F5F2EA;
+    --accent-press: #FFFFFF;
+    --accent-ink: #F5F2EA;
+    --line: #333333;
+    --accent-soft: rgba(254, 211, 107, .16);
+    --glass: rgba(26, 26, 26, .84);
+    --placeholder: #2E2E2E;
+    --danger: #F08070;
+    --shadow: 0 6px 20px rgba(0, 0, 0, .35);
+    --shadow-sm: 0 2px 8px rgba(0, 0, 0, .25);
+    --toast-bg: #F5F2EA;
+    --toast-text: #242424;
+    --banner-bg: #242424;
+    --banner-text: #F5F2EA;
+    --banner-sub: #B3B0A8;
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
-  --bg: #1C1511;
-  --card: #2A201A;
-  --text: #F3E9DC;
-  --hint: #B8A592;
-  --accent: #D9864F;
-  --accent-press: #C2703B;
-  --accent-ink: #E6A06E;
-  --line: #3D2F25;
-  --accent-soft: rgba(217, 134, 79, .16);
-  --glass: rgba(28, 21, 17, .8);
-  --placeholder: #33271F;
-  --danger: #E8735E;
-  --shadow: 0 6px 20px rgba(0, 0, 0, .28);
-  --shadow-sm: 0 2px 8px rgba(0, 0, 0, .2);
-  --toast-bg: #F3E9DC;
-  --banner-bg: #2A201A;
-  --banner-text: #F3E9DC;
-  --banner-sub: #B8A592;
-  --toast-text: #1C1511;
+  --bg: #1A1A1A;
+  --card: #242424;
+  --text: #F5F2EA;
+  --hint: #B3B0A8;
+  --accent: #F5F2EA;
+  --accent-press: #FFFFFF;
+  --accent-ink: #F5F2EA;
+  --line: #333333;
+  --accent-soft: rgba(254, 211, 107, .16);
+  --glass: rgba(26, 26, 26, .84);
+  --placeholder: #2E2E2E;
+  --danger: #F08070;
+  --shadow: 0 6px 20px rgba(0, 0, 0, .35);
+  --shadow-sm: 0 2px 8px rgba(0, 0, 0, .25);
+  --toast-bg: #F5F2EA;
+  --toast-text: #242424;
+  --banner-bg: #242424;
+  --banner-text: #F5F2EA;
+  --banner-sub: #B3B0A8;
   color-scheme: dark;
 }
 
@@ -91,7 +94,7 @@ body {
   margin: 0;
   background: var(--bg);
   color: var(--text);
-  font: 500 15px/1.4 var(--font);
+  font: 400 15px/1.4 var(--font);
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
   overflow-x: hidden;
@@ -115,8 +118,9 @@ h1, h2, h3, p { margin: 0; }
 .hero { padding: 18px var(--gutter) 6px; }
 .hero__brand { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
 .hero__title {
-  font-family: var(--font-display); font-weight: 700; font-size: 26px; line-height: 1.1;
-  letter-spacing: -.01em;
+  font-family: var(--font-display); font-weight: 600; font-size: 28px; line-height: 1.05;
+  text-transform: uppercase; /* как на сайте: название и заголовки разделов капслоком */
+  letter-spacing: .01em;
 }
 .hero__sub { font-size: 13px; color: var(--hint); margin-top: 4px; }
 .hero__cart {
@@ -179,7 +183,8 @@ h1, h2, h3, p { margin: 0; }
 /* ============ Секции и сетка ============ */
 .section { padding: 12px var(--gutter) 4px; scroll-margin-top: 60px; }
 .section__title {
-  font-family: var(--font-display); font-weight: 700; font-size: 22px; line-height: 1.2;
+  font-family: var(--font-display); font-weight: 600; font-size: 22px; line-height: 1.2;
+  text-transform: uppercase;
   margin: 6px 2px 14px;
 }
 .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
@@ -217,7 +222,7 @@ h1, h2, h3, p { margin: 0; }
   position: absolute; left: 8px; top: 8px;
   font-size: 11px; font-weight: 700; letter-spacing: .02em;
   padding: 4px 9px; border-radius: 999px;
-  background: rgba(255, 250, 243, .94); color: #9A4520;
+  background: var(--badge-bg); color: var(--badge-text);
 }
 .card__body { display: flex; flex-direction: column; flex: 1; padding: 10px 6px 2px; }
 .card__title {
@@ -234,7 +239,7 @@ h1, h2, h3, p { margin: 0; }
   width: 36px; height: 36px; border-radius: 50%; flex: none;
   display: grid; place-items: center;
   background: var(--accent-fill); color: var(--on-accent);
-  box-shadow: 0 4px 12px rgba(181, 86, 43, .28);
+  box-shadow: 0 4px 12px rgba(36, 36, 36, .14);
 }
 .add-btn:active { background: var(--accent-fill-press); }
 .stepper {
@@ -255,7 +260,7 @@ h1, h2, h3, p { margin: 0; }
 /* ============ Пустые состояния и подвал ============ */
 .empty { text-align: center; padding: 48px var(--gutter); }
 .empty__icon { font-size: 40px; margin-bottom: 10px; }
-.empty__title { font-family: var(--font-display); font-weight: 700; font-size: 20px; }
+.empty__title { font-family: var(--font-display); font-weight: 600; font-size: 20px; }
 .empty__text { color: var(--hint); margin-top: 6px; font-size: 14px; }
 .empty .primary-btn { margin-top: 20px; }
 
@@ -285,7 +290,7 @@ body.has-fallback .disclaimer { padding-bottom: calc(92px + var(--safe-bottom));
   background: var(--glass);
   -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
 }
-.screen__title { font-family: var(--font-display); font-size: 24px; font-weight: 700; }
+.screen__title { font-family: var(--font-display); font-size: 24px; font-weight: 600; }
 /* В Telegram назад ведёт системная BackButton, своя стрелка только в браузере */
 .nav-back { width: 38px; height: 38px; border-radius: 50%; display: grid; place-items: center; margin-left: -8px; }
 html.in-tg .nav-back { visibility: hidden; width: 0; margin: 0; }
@@ -300,12 +305,12 @@ html.in-tg .screen__head { grid-template-columns: 0 1fr auto; }
 .product__media img { width: 100%; height: 100%; object-fit: cover; object-position: center 70%; }
 .product__close {
   position: absolute; top: 12px; left: 12px; width: 38px; height: 38px; border-radius: 50%;
-  display: grid; place-items: center; background: rgba(28, 21, 17, .45); color: #fff;
+  display: grid; place-items: center; background: rgba(36, 36, 36, .5); color: #fff;
   -webkit-backdrop-filter: blur(8px); backdrop-filter: blur(8px);
 }
 html.in-tg .product__close { display: none; }
 .product__content { padding: 20px var(--gutter) 8px; }
-.product__title { font-family: var(--font-display); font-size: 24px; font-weight: 700; line-height: 1.2; }
+.product__title { font-family: var(--font-display); font-size: 24px; font-weight: 600; line-height: 1.2; }
 .product__meta { color: var(--hint); font-size: 14px; margin-top: 6px; }
 .product__desc { margin-top: 12px; font-size: 15px; line-height: 1.55; }
 .product__qty {
@@ -354,7 +359,7 @@ html.in-tg .product__close { display: none; }
 .totals__row + .totals__row { margin-top: 6px; }
 .totals__row--muted { color: var(--hint); font-size: 14px; }
 .totals__row--big { margin-top: 12px !important; padding-top: 12px; border-top: 1px solid var(--line); }
-.totals__row--big span:first-child { font-family: var(--font-display); font-weight: 700; font-size: 20px; }
+.totals__row--big span:first-child { font-family: var(--font-display); font-weight: 600; font-size: 20px; }
 .totals__row--big span:last-child { font-size: 26px; font-weight: 700; color: var(--accent); font-variant-numeric: tabular-nums; }
 .cart-pad { height: calc(32px + var(--safe-bottom)); }
 body.has-fallback .cart-pad { height: calc(100px + var(--safe-bottom)); }
@@ -414,7 +419,7 @@ body.has-fallback .cart-pad { height: calc(100px + var(--safe-bottom)); }
   pointer-events: auto; display: block; width: 100%; max-width: 528px; margin: 0 auto;
   height: 52px; border-radius: 16px; font-weight: 700; font-size: 16px;
   background: var(--accent-fill); color: var(--on-accent);
-  box-shadow: 0 8px 24px rgba(120, 50, 15, .25);
+  box-shadow: 0 8px 24px rgba(36, 36, 36, .18);
 }
 .fallback-bar__btn:active { background: var(--accent-fill-press); }
 .fallback-bar__btn:disabled { opacity: .5; }
@@ -441,7 +446,7 @@ body.has-fallback .toast { bottom: calc(88px + var(--safe-bottom)); }
   background: var(--accent-soft); padding: 3px 9px; border-radius: 999px;
 }
 .product__block { margin-top: 24px; }
-.product__block-title { font-family: var(--font-display); font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+.product__block-title { font-family: var(--font-display); font-size: 18px; font-weight: 600; margin-bottom: 8px; }
 .product__composition { font-size: 14px; line-height: 1.55; color: var(--hint); }
 .product__composition::first-letter { text-transform: uppercase; }
 .allergens { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; }
@@ -516,7 +521,7 @@ body.has-fallback .product__note { padding-bottom: calc(96px + var(--safe-bottom
 .bakery-pick__sub { font-size: 12.5px; color: var(--hint); }
 .bakery-pick__action { flex: none; font-size: 14px; font-weight: 600; color: var(--accent-ink); }
 .bakery-pick__go { flex: none; color: var(--accent); display: grid; }
-.bakery-pick.is-empty { border: 1.5px dashed var(--accent); background: var(--accent-soft); box-shadow: none; }
+.bakery-pick.is-empty { border: 1.5px dashed var(--accent-fill-press); background: var(--accent-soft); box-shadow: none; }
 .bakery-pick.is-empty .bakery-pick__addr, .bakery-pick.is-empty .bakery-pick__sub { color: var(--accent-ink); }
 .group__hint--accent { color: var(--accent-ink); font-weight: 600; }
 .cart-bakery { margin: 16px var(--gutter) 0; }
@@ -573,8 +578,8 @@ body.has-fallback .product__note { padding-bottom: calc(96px + var(--safe-bottom
 /* ============ Избранное ============ */
 .fav-btn, .product__fav {
   position: absolute; display: grid; place-items: center; border-radius: 50%;
-  background: rgba(255, 250, 243, .92); color: #9A4520;
-  box-shadow: 0 2px 8px rgba(40, 20, 5, .18);
+  background: rgba(255, 255, 255, .94); color: #242424;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, .18);
 }
 .fav-btn { top: 7px; right: 7px; width: 34px; height: 34px; }
 .fav-btn svg { width: 18px; height: 18px; }
@@ -595,7 +600,7 @@ body.has-fallback .product__note { padding-bottom: calc(96px + var(--safe-bottom
   animation: rise .35s var(--ease) both;
 }
 .past__head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
-.past__date { font-family: var(--font-display); font-weight: 700; font-size: 17px; }
+.past__date { font-family: var(--font-display); font-weight: 600; font-size: 17px; }
 .past__sum { font-weight: 700; color: var(--accent); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .past__where { display: flex; align-items: center; gap: 6px; margin-top: 4px; font-size: 13px; color: var(--hint); }
 .past__where svg { width: 15px; height: 15px; flex: none; }
@@ -657,18 +662,18 @@ body.has-fallback .product__note { padding-bottom: calc(96px + var(--safe-bottom
 }
 .promos__dots { display: flex; justify-content: center; gap: 5px; margin-top: 8px; }
 .promos__dot { width: 5px; height: 5px; border-radius: 999px; background: var(--line); transition: width .25s var(--ease), background-color .25s; }
-.promos__dot.is-active { width: 14px; background: var(--accent); }
+.promos__dot.is-active { width: 14px; background: var(--accent-fill); }
 
 /* ============ Окно с правилами ============ */
 .modal { position: fixed; inset: 0; z-index: 120; display: grid; place-items: center; padding: var(--gutter); }
-.modal__scrim { position: absolute; inset: 0; background: rgba(28, 20, 16, .5); animation: fade .2s ease; }
+.modal__scrim { position: absolute; inset: 0; background: rgba(26, 26, 26, .55); animation: fade .2s ease; }
 .modal__card {
   position: relative; width: 100%; max-width: 380px; padding: 22px 20px 18px;
   background: var(--card); color: var(--text); border-radius: 22px; box-shadow: 0 20px 50px rgba(0, 0, 0, .3);
   animation: screen-in .28s var(--ease);
 }
 .modal.is-leaving { animation: fade .18s ease reverse forwards; }
-.modal__title { font-family: var(--font-display); font-weight: 700; font-size: 21px; line-height: 1.2; }
+.modal__title { font-family: var(--font-display); font-weight: 600; font-size: 21px; line-height: 1.2; }
 .modal__list { margin: 12px 0 18px; padding-left: 18px; display: grid; gap: 8px; font-size: 14.5px; line-height: 1.45; color: var(--text); }
 .modal__list li::marker { color: var(--accent); }
 .modal__btn { width: 100%; }
