@@ -207,6 +207,26 @@ h1, h2, h3, p { margin: 0; }
 }
 .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 
+/* Вкладки: на экране только активная. Плавная смена 150 мс */
+#sections { transition: opacity .15s ease; }
+#sections.is-fading { opacity: 0; }
+.list-count { margin: 2px 2px 12px; font-size: 13px; color: var(--hint); }
+.subgroup + .subgroup { margin-top: 22px; }
+.subgroup__title { margin: 0 2px 10px; font-family: var(--font); font-weight: 600; font-size: 15px; color: var(--text); }
+
+/* Комбо: по одной карточке в ряд, крупнее, с составом и выгодой */
+.grid--combo { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+.card--combo .card__body { padding: 12px 8px 6px; }
+.card--combo .card__title { font-size: 18px; -webkit-line-clamp: unset; }
+.card__composition { margin-top: 4px; font-size: 13.5px; line-height: 1.4; color: var(--hint); }
+.card__composition::first-letter { text-transform: uppercase; }
+.card__prices { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; }
+.card--combo .price { font-size: 19px; }
+.save-badge {
+  padding: 4px 10px; border-radius: 999px; font-size: 12.5px; font-weight: 600; white-space: nowrap;
+  background: var(--accent-soft); color: var(--text);
+}
+
 .card {
   position: relative; display: flex; flex-direction: column;
   padding: 6px;

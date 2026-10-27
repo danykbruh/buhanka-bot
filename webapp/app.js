@@ -316,8 +316,8 @@
     toast(on ? `${item.title} - в избранном` : "Убрали из избранного");
   }
 
-  // Обновляет сердечки, вкладку и раздел "Избранное", не сдвигая карточку, на которую смотрит гость
-  function favoritesChanged(anchorId) {
+  // Обновляет сердечки и вкладку "Избранное". Если открыта эта вкладка, перерисовывает её список
+  function favoritesChanged() {
     $$("[data-fav]").forEach((b) => {
       const on = isFav(b.dataset.fav);
       b.setAttribute("aria-pressed", String(on));
@@ -325,31 +325,12 @@
       b.innerHTML = heartIcon(on);
     });
     if (query) return;
-    const anchor = anchorId ? $(`.section[data-cat]:not(#sec-fav) .card[data-id="${anchorId}"]`, els.sections) : null;
-    const before = anchor ? anchor.getBoundingClientRect().top : 0;
-    renderTabs();
-    renderFavSection();
-    if (anchor) window.scrollBy(0, anchor.getBoundingClientRect().top - before);
-    updateActiveTab();
-  }
-
-  function favSectionHtml() {
-    const list = items.filter((it) => favorites.has(it.id));
-    return `<section class="section" id="sec-fav" data-cat="fav">
-      <h2 class="section__title">Избранное</h2>
-      <div class="grid">${list.map(cardHtml).join("")}</div>
-    </section>`;
-  }
-
-  function renderFavSection() {
-    const existing = $("#sec-fav");
-    if (!favorites.size) {
-      if (existing) existing.remove();
+    if (activeCat === "fav" && !favorites.size) {
+      switchTab(categories[0].id); // избранное опустело - вкладка исчезает
       return;
     }
-    if (existing) existing.outerHTML = favSectionHtml();
-    else els.sections.insertAdjacentHTML("afterbegin", favSectionHtml());
-    markLoadedImages($("#sec-fav"));
+    renderTabs();
+    if (activeCat === "fav") renderSections();
   }
 
   // Сердечко ловим на погружении, чтобы клик не открыл карточку товара
@@ -392,42 +373,141 @@
     </article>`;
   }
 
+  // ---------- Вкладки каталога: на экране только позиции активной вкладки ----------
+  const KEY_TAB = "buhanka_tab";
+  let activeCat = store.get(KEY_TAB);
+  const validTab = (id) => tabCats().some((c) => c.id === id);
+  const plural = (n, one, few, many) => (n % 10 === 1 && n % 100 !== 11 ? one
+    : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? few : many);
+  const itemsCount = (n) => `${n} ${plural(n, "позиция", "позиции", "позиций")}`;
+  const catItems = (id) => items.filter((it) => (id === "fav" ? favorites.has(it.id) : it.cat === id));
+
   function renderTabs() {
-    const active = $(".tab.is-active", els.tabs);
-    const activeCat = active ? active.dataset.cat : null;
-    const cats = tabCats();
-    const current = cats.some((c) => c.id === activeCat) ? activeCat : cats[0].id;
-    els.tabs.innerHTML = cats
-      .map((c) => `<button class="tab${c.id === current ? " is-active" : ""}${c.id === "fav" ? " tab--fav" : ""}" type="button" data-cat="${c.id}">${c.id === "fav" ? heartIcon(true) : ""}${esc(c.tab || c.title)}</button>`)
+    if (!validTab(activeCat)) activeCat = categories[0].id;
+    els.tabs.innerHTML = tabCats()
+      .map((c) => `<button class="tab${c.id === activeCat ? " is-active" : ""}${c.id === "fav" ? " tab--fav" : ""}" type="button" role="tab" aria-selected="${c.id === activeCat}" data-cat="${c.id}">${c.id === "fav" ? heartIcon(true) : ""}${esc(c.tab || c.title)}</button>`)
       .join("");
+  }
+
+  // Подгруппы вкладки из menu.json (groups у категории). Позиции без подгруппы - в конце
+  function groupsOfCat(cat, list) {
+    if (!cat || !cat.groups) return null;
+    const grouped = cat.groups.map((g) => ({ title: g.title, items: g.items.map((id) => byId.get(id)).filter((it) => it && list.includes(it)) }));
+    const rest = list.filter((it) => !grouped.some((g) => g.items.includes(it)));
+    if (rest.length) grouped.push({ title: "Ещё", items: rest });
+    return grouped.filter((g) => g.items.length);
+  }
+
+  // Выгода комбо по всем сочетаниям опций: на карточке показываем наибольшую
+  function comboSavings(item) {
+    let variants = [{}];
+    for (const g of groupsOf(item)) variants = variants.flatMap((o) => g.choices.map((c) => ({ ...o, [g.id]: c.id })));
+    const saves = variants
+      .map((o) => partsOf(item, o).reduce((sum, part) => sum + part.price, 0) - unitPrice(item, o))
+      .filter((x) => x > 0);
+    return saves.length ? { min: Math.min(...saves), max: Math.max(...saves) } : null;
+  }
+
+  function comboCardHtml(item) {
+    const price = hasPriceRange(item) ? `<small>от</small>${money(minPrice(item))}` : money(item.price);
+    const save = comboSavings(item);
+    const saveText = save && (save.min === save.max ? `Выгода ${money(save.max)}` : `Выгода до ${money(save.max)}`);
+    return `<article class="card card--combo" data-id="${item.id}" tabindex="0" aria-label="${esc(item.title)}, ${esc(money(minPrice(item)))}">
+      <div class="media">
+        <img src="${imgSrc(item.id)}" alt="" loading="lazy" decoding="async" width="400" height="300"${imgPosAttr(item)}>
+        ${item.badge ? `<span class="badge">${esc(item.badge)}</span>` : ""}
+        ${favBtnHtml(item, "fav-btn")}
+      </div>
+      <div class="card__body">
+        <h3 class="card__title">${esc(item.title)}</h3>
+        ${item.composition ? `<p class="card__composition">${esc(item.composition)}</p>` : ""}
+        <div class="card__foot">
+          <span class="card__prices"><span class="price">${price}</span>${saveText ? `<span class="save-badge">${saveText}</span>` : ""}</span>
+          <div class="card__ctrl" data-qty="${itemQty(item.id)}">${ctrlHtml(item)}</div>
+        </div>
+      </div>
+    </article>`;
   }
 
   function renderSections() {
     const q = norm(query.trim());
     if (q) {
+      // Поиск идёт по всем категориям, вкладки на это время скрыты
       const found = items.filter((it) => norm(`${it.title} ${it.desc} ${it.composition || ""} ${it.short || ""}`).includes(q));
       els.tabs.hidden = true;
       els.searchEmpty.hidden = found.length > 0;
       els.sections.innerHTML = found.length
-        ? `<section class="section"><h2 class="section__title">Найдено: ${found.length}</h2><div class="grid">${found.map(cardHtml).join("")}</div></section>`
+        ? `<div class="section"><p class="list-count">Найдено: ${itemsCount(found.length)}</p><div class="grid">${found.map(cardHtml).join("")}</div></div>`
         : "";
     } else {
       els.tabs.hidden = false;
       els.searchEmpty.hidden = true;
       renderTabs();
-      els.sections.innerHTML = (favorites.size ? favSectionHtml() : "") + categories
-        .map((c) => {
-          const list = items.filter((it) => it.cat === c.id);
-          return `<section class="section" id="sec-${c.id}" data-cat="${c.id}">
-            <h2 class="section__title">${esc(c.title)}</h2>
-            <div class="grid">${list.map(cardHtml).join("")}</div>
-          </section>`;
-        })
-        .join("");
+      const cat = activeCat === "fav" ? FAV_CAT : categories.find((c) => c.id === activeCat);
+      const list = catItems(activeCat);
+      const groups = groupsOfCat(cat, list);
+      let body;
+      if (activeCat === "combo") body = `<div class="grid grid--combo">${list.map(comboCardHtml).join("")}</div>`;
+      else if (groups) body = groups.map((g) => `<section class="subgroup"><h3 class="subgroup__title">${esc(g.title)}</h3><div class="grid">${g.items.map(cardHtml).join("")}</div></section>`).join("");
+      else body = `<div class="grid">${list.map(cardHtml).join("")}</div>`;
+      els.sections.innerHTML = `<div class="section" role="tabpanel" data-cat="${activeCat}" aria-label="${esc(cat.title)}">
+        <p class="list-count">${itemsCount(list.length)}</p>${body}
+      </div>`;
     }
     markLoadedImages(els.sections);
-    updateActiveTab();
   }
+
+  // Начало списка под липкими вкладками. force - прокрутить туда, даже если гость выше
+  function scrollToListTop(force = false) {
+    const y = els.sections.getBoundingClientRect().top + window.scrollY - els.tabs.offsetHeight;
+    if (force || window.scrollY > y) window.scrollTo({ top: Math.max(0, y), behavior: force ? "smooth" : "auto" });
+  }
+
+  let fadeTimer = 0;
+  function switchTab(cat) {
+    if (!validTab(cat) || cat === activeCat) return false;
+    activeCat = cat;
+    store.set(KEY_TAB, cat);
+    haptic.select();
+    $$(".tab", els.tabs).forEach((t) => {
+      const on = t.dataset.cat === cat;
+      t.classList.toggle("is-active", on);
+      t.setAttribute("aria-selected", String(on));
+      if (on) els.tabs.scrollTo({ left: t.offsetLeft - (els.tabs.clientWidth - t.offsetWidth) / 2, behavior: "smooth" });
+    });
+    // Плавная смена: список гаснет за 150 мс, меняется и проявляется
+    els.sections.classList.add("is-fading");
+    clearTimeout(fadeTimer);
+    fadeTimer = setTimeout(() => {
+      renderSections();
+      scrollToListTop();
+      requestAnimationFrame(() => els.sections.classList.remove("is-fading"));
+    }, 150);
+    return true;
+  }
+
+  els.tabs.addEventListener("click", (e) => {
+    const tab = e.target.closest(".tab");
+    if (tab) switchTab(tab.dataset.cat);
+  });
+
+  // Свайп влево и вправо по списку переключает соседнюю вкладку
+  let swipe = null;
+  els.sections.addEventListener("touchstart", (e) => {
+    if (e.touches.length !== 1 || query) { swipe = null; return; }
+    swipe = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() };
+  }, { passive: true });
+  els.sections.addEventListener("touchend", (e) => {
+    if (!swipe) return;
+    const dx = e.changedTouches[0].clientX - swipe.x;
+    const dy = e.changedTouches[0].clientY - swipe.y;
+    const quick = Date.now() - swipe.t < 700;
+    swipe = null;
+    if (!quick || Math.abs(dx) < 60 || Math.abs(dx) < Math.abs(dy) * 1.5) return;
+    const cats = tabCats();
+    const next = cats[cats.findIndex((c) => c.id === activeCat) + (dx < 0 ? 1 : -1)];
+    if (next) switchTab(next.id);
+  }, { passive: true });
 
   function refreshCards() {
     $$(".card", els.sections).forEach((card) => {
@@ -499,54 +579,15 @@
     els.search.focus();
   });
 
-  // ---------- Вкладки: липкие, подсветка при прокрутке ----------
-  let spyLockUntil = 0;
-
-  els.tabs.addEventListener("click", (e) => {
-    const tab = e.target.closest(".tab");
-    if (!tab) return;
-    const sec = $(`#sec-${tab.dataset.cat}`);
-    if (!sec) return;
-    haptic.select();
-    setActiveTab(tab.dataset.cat);
-    spyLockUntil = Date.now() + 700;
-    const y = sec.getBoundingClientRect().top + window.scrollY - els.tabs.offsetHeight + 1;
-    window.scrollTo({ top: Math.max(0, y), behavior: "smooth" });
-  });
-
-  function setActiveTab(cat) {
-    $$(".tab", els.tabs).forEach((t) => {
-      const on = t.dataset.cat === cat;
-      if (on && !t.classList.contains("is-active")) {
-        const left = t.offsetLeft - (els.tabs.clientWidth - t.offsetWidth) / 2;
-        els.tabs.scrollTo({ left, behavior: "smooth" });
-      }
-      t.classList.toggle("is-active", on);
-    });
-  }
-
-  function updateActiveTab() {
-    const tabsTop = els.tabs.getBoundingClientRect().top;
-    els.tabs.classList.toggle("is-stuck", tabsTop <= 0 && window.scrollY > 0);
-    if (query || Date.now() < spyLockUntil) return;
-    const line = els.tabs.offsetHeight + 24;
-    const cats = tabCats();
-    let current = cats[0].id;
-    $$(".section[data-cat]", els.sections).forEach((s) => {
-      if (s.getBoundingClientRect().top <= line) current = s.dataset.cat;
-    });
-    // Долистали до конца - активна последняя категория
-    if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 4) {
-      current = cats[cats.length - 1].id;
-    }
-    setActiveTab(current);
-  }
-
+  // ---------- Липкие вкладки: тень, когда прилипли ----------
   let scrollTicking = false;
   window.addEventListener("scroll", () => {
     if (scrollTicking) return;
     scrollTicking = true;
-    requestAnimationFrame(() => { scrollTicking = false; updateActiveTab(); });
+    requestAnimationFrame(() => {
+      scrollTicking = false;
+      els.tabs.classList.toggle("is-stuck", els.tabs.getBoundingClientRect().top <= 0 && window.scrollY > 0);
+    });
   }, { passive: true });
 
   // ---------- Навигация между экранами ----------
@@ -1723,6 +1764,10 @@
       else if (!cart.length) toast(`Промокод ${p.code} сохранён: скидка появится в корзине`, 3000);
       else if (cartIssue) toast(p.error, 3500);
       else toast(`Промокод ${p.code} применён: -${money(p.discount || 0)}`, 3000);
+    } else if (action.type === "tab" && categories.some((c) => c.id === action.cat)) {
+      if (query) { els.search.value = ""; query = ""; els.searchClear.hidden = true; renderSections(); }
+      switchTab(action.cat);
+      setTimeout(() => scrollToListTop(true), 180); // показать список под вкладками
     } else if (action.type === "item" && byId.has(action.id)) {
       openProduct(action.id);
     } else if (action.type === "info") {

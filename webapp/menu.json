@@ -35,11 +35,74 @@
     {
       "id": "bakery",
       "title": "Горячая выпечка",
-      "tab": "Выпечка"
+      "tab": "Выпечка",
+      "groups": [
+        {
+          "title": "Круассаны",
+          "items": [
+            "croissant-classic",
+            "croissant-salmon",
+            "croissant-raspberry",
+            "croissant-almond"
+          ]
+        },
+        {
+          "title": "Пончики",
+          "items": [
+            "donut-strawberry",
+            "donut-chocolate",
+            "donut-caramel"
+          ]
+        },
+        {
+          "title": "Сытное",
+          "items": [
+            "sausage-roll",
+            "khachapuri-mini",
+            "pie-cabbage",
+            "sandwich-ham-cheese"
+          ]
+        },
+        {
+          "title": "Сладкое",
+          "items": [
+            "cinnabon",
+            "puff-cherry",
+            "syrnik"
+          ]
+        }
+      ]
     },
     {
       "id": "drinks",
-      "title": "Напитки"
+      "title": "Напитки",
+      "groups": [
+        {
+          "title": "Кофе",
+          "items": [
+            "americano",
+            "cappuccino",
+            "latte",
+            "raf"
+          ]
+        },
+        {
+          "title": "Чай",
+          "items": [
+            "tea-black",
+            "tea-ginger",
+            "tea-seabuckthorn"
+          ]
+        },
+        {
+          "title": "Соки",
+          "items": [
+            "juice-apple",
+            "juice-peach",
+            "juice-multifruit"
+          ]
+        }
+      ]
     },
     {
       "id": "combo",
@@ -868,8 +931,8 @@
       "subtitle": "Латте + 2 позиции, выгода 170 ₽",
       "image": "img/menu/croissant-salmon.webp",
       "action": {
-        "type": "item",
-        "id": "combo-2"
+        "type": "tab",
+        "cat": "combo"
       }
     },
     {
