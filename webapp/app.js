@@ -1604,11 +1604,11 @@
     els.promos.innerHTML = `
       <div class="promos__track">
         ${banners.map((b, i) => `<button type="button" class="banner" data-banner="${i}" aria-label="${esc(b.title)}. ${esc(b.subtitle || "")}">
-          ${b.image ? `<img class="banner__img" src="${esc(b.image)}" alt="" decoding="async" ${i ? 'loading="lazy"' : ""}${b.imgPos ? ` style="object-position:${esc(b.imgPos)}"` : ""}>` : ""}
           <span class="banner__text">
             <span class="banner__title">${esc(b.title)}</span>
             ${b.subtitle ? `<span class="banner__sub">${esc(b.subtitle)}</span>` : ""}
           </span>
+          ${b.image ? `<span class="banner__photo"><img class="banner__img" src="${esc(b.image)}" alt="" decoding="async" width="400" height="300" ${i ? 'loading="lazy"' : ""}${b.imgPos ? ` style="object-position:${esc(b.imgPos)}"` : ""}></span>` : ""}
         </button>`).join("")}
       </div>
       ${banners.length > 1 ? `<div class="promos__dots" aria-hidden="true">${banners.map((_, i) => `<span class="promos__dot${i === 0 ? " is-active" : ""}"></span>`).join("")}</div>` : ""}`;

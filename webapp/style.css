@@ -22,6 +22,9 @@
   --shadow: 0 6px 20px rgba(60, 30, 10, .08);
   --shadow-sm: 0 2px 8px rgba(60, 30, 10, .06);
   --toast-bg: #2B1D14;
+  --banner-bg: #EFE3D2;
+  --banner-text: #2B1D14;
+  --banner-sub: #66523F;
   --toast-text: #F6EFE4;
 
   --font: "Manrope", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
@@ -51,6 +54,9 @@
     --shadow: 0 6px 20px rgba(0, 0, 0, .28);
     --shadow-sm: 0 2px 8px rgba(0, 0, 0, .2);
     --toast-bg: #F3E9DC;
+    --banner-bg: #2A201A;
+    --banner-text: #F3E9DC;
+    --banner-sub: #B8A592;
     --toast-text: #1C1511;
     color-scheme: dark;
   }
@@ -71,6 +77,9 @@
   --shadow: 0 6px 20px rgba(0, 0, 0, .28);
   --shadow-sm: 0 2px 8px rgba(0, 0, 0, .2);
   --toast-bg: #F3E9DC;
+  --banner-bg: #2A201A;
+  --banner-text: #F3E9DC;
+  --banner-sub: #B8A592;
   --toast-text: #1C1511;
   color-scheme: dark;
 }
@@ -604,39 +613,49 @@ body.has-fallback .product__note { padding-bottom: calc(96px + var(--safe-bottom
 .past__repeat:disabled { background: var(--line); color: var(--hint); }
 
 /* ============ Акции: карусель ============ */
-/* Трек на всю ширину экрана. Слайд = ширина - поле 16 слева - зазор 16 - 12 px соседа справа.
-   Зазор равен полю, поэтому у листнутой карусели слева ничего не выглядывает */
-.promos { margin: 0 calc(-1 * var(--gutter)) 14px; container-type: inline-size; }
+/* Трек внутри полей экрана, слайд = вся ширина трека. Соседний слайд за краем трека, поэтому не торчит */
+.promos { margin: 0 0 14px; }
 .promos__track {
-  display: flex; gap: var(--gutter); overflow-x: auto; scrollbar-width: none;
-  scroll-snap-type: x mandatory; scroll-padding-left: var(--gutter);
-  padding: 2px calc(var(--gutter) + 12px) 6px var(--gutter);
+  display: flex; gap: 12px; overflow-x: auto; scrollbar-width: none;
+  scroll-snap-type: x mandatory; overscroll-behavior-x: contain;
+  border-radius: 20px;
 }
 .promos__track::-webkit-scrollbar { display: none; }
+/* Слева текст на сплошном фоне, справа фото 4:3 во всю высоту: пропорции совпадают с фото, ничего не режется */
 .banner {
-  position: relative; overflow: hidden; scroll-snap-align: start; scroll-snap-stop: always;
-  flex: 0 0 calc(100vw - 2 * var(--gutter) - 12px);
-  flex-basis: calc(100cqw - 2 * var(--gutter) - 12px);
-  height: 150px; border-radius: 20px; text-align: left;
-  display: flex; align-items: flex-end; padding: 16px;
-  background: #3B2418; color: #FFFFFF; box-shadow: var(--shadow);
+  flex: 0 0 100%; min-width: 0; scroll-snap-align: center; scroll-snap-stop: always;
+  height: 140px; display: flex; align-items: stretch; overflow: hidden;
+  border-radius: 20px; text-align: left;
+  background: var(--banner-bg); color: var(--banner-text);
 }
 .banner:active { transform: scale(.98); }
-.banner__img {
-  position: absolute; inset: 0; width: 100%; height: 100%;
-  object-fit: cover; object-position: center 70%;
+.banner__text {
+  flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 6px;
+  padding: 14px 12px 14px 16px;
 }
-.banner::after {
-  content: ""; position: absolute; inset: 0; pointer-events: none;
-  background: linear-gradient(to top, rgba(28, 20, 16, .85) 0%, rgba(28, 20, 16, .35) 55%, transparent 100%);
-}
-.banner__text { position: relative; z-index: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; }
 .banner__title {
-  font-family: var(--font-display); font-weight: 600; font-size: 22px; line-height: 1.15;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, .25);
+  font-family: var(--font-display); font-weight: 600; font-size: 19px; line-height: 1.18;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  overflow-wrap: anywhere;
 }
-.banner__sub { font-family: var(--font); font-weight: 500; font-size: 14px; line-height: 1.3; opacity: .92; }
-.promos__dots { display: flex; justify-content: center; gap: 5px; margin-top: 2px; }
+.banner__sub {
+  font-family: var(--font); font-weight: 500; font-size: 13px; line-height: 1.3; color: var(--banner-sub);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+.banner__photo {
+  flex: none; height: 100%; aspect-ratio: 4 / 3; overflow: hidden;
+  border-radius: 0 20px 20px 0; background: var(--placeholder);
+}
+.banner__img { display: block; width: 100%; height: 100%; object-fit: cover; }
+/* Узкие экраны (320-359): при высоте 140 фото 187 px оставляет тексту 79 px, туда не помещается ни один заголовок.
+   Баннер ниже - фото 149x112, по-прежнему 4:3 без обрезки, тексту остаётся около 120 px */
+@media (max-width: 359px) {
+  .banner { height: 112px; }
+  .banner__text { padding: 10px 10px 10px 12px; gap: 4px; }
+  .banner__title { font-size: 17px; }
+  .banner__sub { font-size: 12px; }
+}
+.promos__dots { display: flex; justify-content: center; gap: 5px; margin-top: 8px; }
 .promos__dot { width: 5px; height: 5px; border-radius: 999px; background: var(--line); transition: width .25s var(--ease), background-color .25s; }
 .promos__dot.is-active { width: 14px; background: var(--accent); }
 

@@ -866,8 +866,7 @@
       "id": "combo-day",
       "title": "Комбо дня",
       "subtitle": "Латте + 2 позиции, выгода 170 ₽",
-      "image": "img/menu/combo-2.webp",
-      "imgPos": "center 62%",
+      "image": "img/menu/croissant-salmon.webp",
       "action": {
         "type": "item",
         "id": "combo-2"
@@ -875,10 +874,9 @@
     },
     {
       "id": "bonus",
-      "title": "Каждый 6-й кофе бесплатно",
+      "title": "6-й кофе бесплатно",
       "subtitle": "Копите штампы с каждым заказом",
       "image": "img/menu/cappuccino.webp",
-      "imgPos": "center 72%",
       "action": {
         "type": "info",
         "title": "Каждый 6-й кофе бесплатно",
@@ -895,7 +893,6 @@
       "title": "Утренний кофе -20%",
       "subtitle": "Каждый день до 10:00",
       "image": "img/menu/latte.webp",
-      "imgPos": "center 70%",
       "hours": [
         "00:00",
         "10:00"
