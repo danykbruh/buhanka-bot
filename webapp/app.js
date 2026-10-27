@@ -64,6 +64,8 @@
   const money = (n) => `${n.toLocaleString("ru-RU")} ₽`;
   const norm = (s) => s.toLowerCase().replace(/ё/g, "е");
   const imgSrc = (id) => `img/menu/${id}.webp`;
+  // По умолчанию фото кадрируются по center 70% (CSS): еда в нижней части снимков. Своё значение - imgPos в menu.json
+  const imgPosAttr = (item) => (item.imgPos ? ` style="object-position:${esc(item.imgPos)}"` : "");
   const pad = (n) => String(n).padStart(2, "0");
   const store = {
     get(key) { try { return localStorage.getItem(key); } catch { return null; } },
@@ -375,7 +377,7 @@
     const meta = cardLine(item);
     return `<article class="card" data-id="${item.id}" tabindex="0" aria-label="${esc(item.title)}, ${esc(money(minPrice(item)))}">
       <div class="media">
-        <img src="${imgSrc(item.id)}" alt="" loading="lazy" decoding="async" width="400" height="300">
+        <img src="${imgSrc(item.id)}" alt="" loading="lazy" decoding="async" width="400" height="300"${imgPosAttr(item)}>
         ${item.badge ? `<span class="badge">${esc(item.badge)}</span>` : ""}
         ${favBtnHtml(item, "fav-btn")}
       </div>
@@ -609,7 +611,8 @@
       if (!text) { mb.hide(); return; }
       mb.setParams({
         text,
-        color: active ? cssColor("--accent", "#B5562B") : cssColor("--line", "#E8DCCB"),
+        // Та же заливка, что у кнопок в мини-аппе: #B5562B с белым текстом в обеих темах (4.86:1)
+        color: active ? cssColor("--accent-fill", "#B5562B") : cssColor("--line", "#E8DCCB"),
         text_color: active ? cssColor("--on-accent", "#FFFFFF") : cssColor("--hint", "#7A6656"),
         is_active: active,
         is_visible: true,
@@ -720,7 +723,7 @@
     const pairs = (item.pairing || []).map((id) => byId.get(id)).filter(Boolean);
     els.productBody.innerHTML = `
       <div class="product__media">
-        <img src="${imgSrc(item.id)}" alt="${esc(item.title)}" decoding="async" width="800" height="600">
+        <img src="${imgSrc(item.id)}" alt="${esc(item.title)}" decoding="async" width="800" height="600"${imgPosAttr(item)}>
         <button class="product__close" type="button" data-back aria-label="Закрыть">${ICON.close}</button>
         ${favBtnHtml(item, "product__fav")}
       </div>
@@ -757,7 +760,7 @@
 
   function pairHtml(item) {
     return `<button type="button" class="pair" data-pair="${item.id}" aria-label="Добавить в корзину: ${esc(item.title)}">
-      <span class="pair__media"><img src="${imgSrc(item.id)}" alt="" loading="lazy" decoding="async" width="200" height="150"></span>
+      <span class="pair__media"><img src="${imgSrc(item.id)}" alt="" loading="lazy" decoding="async" width="200" height="150"${imgPosAttr(item)}></span>
       <span class="pair__title">${esc(item.title)}</span>
       <span class="pair__foot">
         <span class="pair__price">${money(minPrice(item))}</span>
@@ -888,7 +891,7 @@
           const opts = optsLabel(item, l.opts);
           const unit = unitPrice(item, l.opts);
           return `<div class="line">
-            <img class="line__img" src="${imgSrc(item.id)}" alt="" data-open="${item.id}" decoding="async">
+            <img class="line__img" src="${imgSrc(item.id)}" alt="" data-open="${item.id}" decoding="async"${imgPosAttr(item)}>
             <div>
               <div class="line__title">${esc(item.title)}</div>
               ${opts ? `<div class="line__opts">${esc(opts)}</div>` : ""}
@@ -1581,8 +1584,7 @@
   }
 
   // ---------- Акции: карусель баннеров из menu.json (promos) ----------
-  const BANNER_THEMES = new Set(["accent", "cocoa", "cream"]);
-  const BANNER_CTA = { code: "Применить код", item: "Посмотреть", info: "Как это работает" };
+  // Фон баннера - фото из img/menu, поверх тёмный градиент и белый текст. Весь баннер - одна кнопка
   const AUTOPLAY_MS = 5000;
   let banners = [];
   let bannerIndex = 0;
@@ -1601,20 +1603,19 @@
     if (!banners.length) return;
     els.promos.innerHTML = `
       <div class="promos__track">
-        ${banners.map((b, i) => `<button type="button" class="banner banner--${BANNER_THEMES.has(b.theme) ? b.theme : "accent"}" data-banner="${i}">
+        ${banners.map((b, i) => `<button type="button" class="banner" data-banner="${i}" aria-label="${esc(b.title)}. ${esc(b.subtitle || "")}">
+          ${b.image ? `<img class="banner__img" src="${esc(b.image)}" alt="" decoding="async" ${i ? 'loading="lazy"' : ""}${b.imgPos ? ` style="object-position:${esc(b.imgPos)}"` : ""}>` : ""}
           <span class="banner__text">
             <span class="banner__title">${esc(b.title)}</span>
             ${b.subtitle ? `<span class="banner__sub">${esc(b.subtitle)}</span>` : ""}
-            <span class="banner__cta">${BANNER_CTA[b.action && b.action.type] || "Подробнее"}</span>
           </span>
-          ${b.emoji ? `<span class="banner__emoji" aria-hidden="true">${esc(b.emoji)}</span>` : ""}
         </button>`).join("")}
       </div>
       ${banners.length > 1 ? `<div class="promos__dots" aria-hidden="true">${banners.map((_, i) => `<span class="promos__dot${i === 0 ? " is-active" : ""}"></span>`).join("")}</div>` : ""}`;
     const track = $(".promos__track", els.promos);
+    const step = () => (track.children[1] ? track.children[1].offsetLeft - track.children[0].offsetLeft : 1);
     track.addEventListener("scroll", () => {
-      const slide = track.children[0];
-      const i = Math.round(track.scrollLeft / (slide.offsetWidth + 10));
+      const i = Math.round(track.scrollLeft / step());
       if (i !== bannerIndex) setBannerDot(i);
     }, { passive: true });
     track.addEventListener("pointerdown", () => { bannerPausedUntil = Date.now() + 2 * AUTOPLAY_MS; }, { passive: true });
@@ -1629,7 +1630,7 @@
   const reduceMotion = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
   if (!reduceMotion) {
     setInterval(() => {
-      if (banners.length < 2 || document.hidden || stack.length || Date.now() < bannerPausedUntil || query) return;
+      if (banners.length < 2 || document.hidden || stack.length || infoEl || Date.now() < bannerPausedUntil || query) return;
       const track = $(".promos__track", els.promos);
       if (!track || track.getBoundingClientRect().bottom < 0) return;
       const next = (bannerIndex + 1) % banners.length;
@@ -1655,10 +1656,41 @@
     } else if (action.type === "item" && byId.has(action.id)) {
       openProduct(action.id);
     } else if (action.type === "info") {
-      if (inTg) tg.showAlert(action.text);
-      else toast(action.text, 5000);
+      showInfo(action.title || banner.title, action.lines || [action.text]);
     }
   });
+
+  // ---------- Короткое окно с пояснением ----------
+  let infoEl = null;
+
+  function showInfo(title, lines) {
+    closeInfo(true);
+    infoEl = document.createElement("div");
+    infoEl.className = "modal";
+    infoEl.innerHTML = `
+      <div class="modal__scrim" data-info-close></div>
+      <div class="modal__card" role="dialog" aria-modal="true" aria-labelledby="infoTitle">
+        <h2 class="modal__title" id="infoTitle">${esc(title)}</h2>
+        <ul class="modal__list">${lines.filter(Boolean).map((l) => `<li>${esc(l)}</li>`).join("")}</ul>
+        <button type="button" class="primary-btn modal__btn" data-info-close>Понятно</button>
+      </div>`;
+    document.body.appendChild(infoEl);
+    document.body.classList.add("is-locked");
+    $(".modal__btn", infoEl).focus({ preventScroll: true });
+  }
+
+  function closeInfo(instant = false) {
+    if (!infoEl) return;
+    const el = infoEl;
+    infoEl = null;
+    if (!stack.length) document.body.classList.remove("is-locked");
+    if (instant) { el.remove(); return; }
+    el.classList.add("is-leaving");
+    setTimeout(() => el.remove(), 180);
+  }
+
+  document.addEventListener("click", (e) => { if (e.target.closest("[data-info-close]")) closeInfo(); });
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && infoEl) { e.stopImmediatePropagation(); closeInfo(); } }, true);
 
   // ---------- Тост ----------
   let toastTimer = 0;
