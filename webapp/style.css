@@ -217,7 +217,7 @@ h1, h2, h3, p { margin: 0; }
 /* Комбо: по одной карточке в ряд, крупнее, с составом и выгодой */
 .grid--combo { grid-template-columns: minmax(0, 1fr); gap: 14px; }
 .card--combo .card__body { padding: 12px 8px 6px; }
-.card--combo .card__title { font-size: 18px; -webkit-line-clamp: unset; }
+.card--combo .card__title { font-size: 18px; -webkit-line-clamp: unset; min-height: 0; }
 .card__composition { margin-top: 4px; font-size: 13.5px; line-height: 1.4; color: var(--hint); }
 .card__composition::first-letter { text-transform: uppercase; }
 .card__prices { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; }
@@ -265,12 +265,13 @@ h1, h2, h3, p { margin: 0; }
 }
 .card__body { display: flex; flex-direction: column; flex: 1; padding: 10px 6px 2px; }
 .card__title {
-  font-size: 15px; font-weight: 600; line-height: 1.25;
+  font-family: var(--font); font-size: 15px; font-weight: 600; line-height: 1.25;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  min-height: 2.5em; /* место под 2 строки: мета и цена во всех карточках ряда на одной линии */
 }
-.card__meta { font-size: 12.5px; color: var(--hint); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.card__meta { font-family: var(--font); font-size: 13px; font-weight: 400; line-height: 1.3; color: var(--hint); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .card__foot { display: flex; align-items: center; justify-content: space-between; gap: 6px; margin-top: auto; padding-top: 10px; min-height: 46px; }
-.price { font-size: 16px; font-weight: 700; color: var(--accent); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.price { font-family: var(--font); font-size: 16px; font-weight: 700; color: var(--accent); white-space: nowrap; font-variant-numeric: tabular-nums; }
 .price small { font-size: 12px; font-weight: 600; margin-right: 3px; opacity: .8; }
 
 /* Кнопка + и счётчик */
@@ -352,9 +353,26 @@ html.in-tg .screen__head { grid-template-columns: 0 1fr auto; }
 }
 html.in-tg .product__close { display: none; }
 .product__content { padding: 20px var(--gutter) 8px; }
-.product__title { font-family: var(--font-display); font-size: 24px; font-weight: 600; line-height: 1.2; }
+.product__title { font-family: var(--font-display); font-size: 26px; font-weight: 600; line-height: 1.15; text-transform: none; }
 .product__meta { color: var(--hint); font-size: 14px; margin-top: 6px; }
-.product__desc { margin-top: 12px; font-size: 15px; line-height: 1.55; }
+.product__price { margin-top: 10px; font-family: var(--font); font-size: 24px; font-weight: 700; line-height: 1.2; color: var(--text); font-variant-numeric: tabular-nums; }
+.product__price small { font-size: 15px; font-weight: 600; color: var(--hint); }
+.product__desc {
+  margin-top: 12px; font-family: var(--font); font-size: 16px; font-weight: 400; line-height: 1.5;
+  display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden;
+}
+.product__desc.is-open { -webkit-line-clamp: unset; display: block; }
+.product__more { margin-top: 4px; padding: 4px 0; font-family: var(--font); font-size: 14px; font-weight: 600; color: var(--accent-ink); text-decoration: underline; text-underline-offset: 3px; }
+.product__more:active { transform: none; opacity: .7; }
+/* Разделы экрана товара: подзаголовок капслоком, отступ 24px и тонкий разделитель */
+.psec { margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--line); }
+.psec[hidden] { display: none; }
+.psec__title {
+  margin-bottom: 12px; font-family: var(--font); font-size: 13px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .06em; color: var(--hint);
+}
+.psec .opt-group:first-of-type { margin-top: 0; }
+.psec .pairing__list { margin: 0 calc(-1 * var(--gutter)); }
 .product__qty {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   margin-top: 26px; padding-top: 18px; border-top: 1px solid var(--line);
@@ -364,7 +382,7 @@ html.in-tg .product__close { display: none; }
 
 /* Опции: сегменты-таблетки */
 .opt-group { margin-top: 22px; }
-.opt-group__title { font-size: 15px; font-weight: 700; margin-bottom: 10px; display: flex; gap: 8px; align-items: baseline; }
+.opt-group__title { font-size: 15px; font-weight: 600; margin-bottom: 10px; display: flex; gap: 8px; align-items: baseline; }
 .opt-group__req { font-size: 12px; font-weight: 500; color: var(--hint); }
 .opt-group.is-invalid .opt-group__req { color: var(--danger); }
 .opt-group.is-invalid { animation: nudge .35s var(--ease); }
@@ -481,7 +499,7 @@ body.has-fallback .toast { bottom: calc(88px + var(--safe-bottom)); }
 /* ============ Экран товара: подробности ============ */
 .product__stats {
   display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px;
-  margin-top: 6px; font-size: 14px; font-weight: 600; color: var(--hint); font-variant-numeric: tabular-nums;
+  margin-top: 6px; font-family: var(--font); font-size: 14px; font-weight: 500; color: var(--hint); font-variant-numeric: tabular-nums;
 }
 .product__incart {
   font-size: 12px; font-weight: 700; color: var(--accent-ink);
@@ -491,10 +509,10 @@ body.has-fallback .toast { bottom: calc(88px + var(--safe-bottom)); }
 .product__block-title { font-family: var(--font-display); font-size: 18px; font-weight: 600; margin-bottom: 8px; }
 .product__composition { font-size: 14px; line-height: 1.55; color: var(--hint); }
 .product__composition::first-letter { text-transform: uppercase; }
-.allergens { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 12px; }
+.allergens { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .allergens__label { font-size: 12px; font-weight: 600; color: var(--hint); margin-right: 2px; }
 .allergen {
-  font-size: 12px; font-weight: 600; line-height: 1; padding: 6px 10px; border-radius: 999px;
+  font-family: var(--font); font-size: 13px; font-weight: 500; line-height: 1; padding: 7px 12px; border-radius: 999px;
   border: 1px solid var(--line); background: var(--card); color: var(--text);
 }
 

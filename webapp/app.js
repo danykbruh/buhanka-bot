@@ -796,6 +796,7 @@
     product = { item, opts: defaultOpts(item), qty: 1 };
     renderProduct();
     open("product");
+    updateMoreLink();
   }
 
   function optionGroupHtml(g) {
@@ -835,20 +836,28 @@
       <div class="product__content">
         <h2 class="product__title" id="productTitle">${esc(item.title)}</h2>
         <p class="product__stats" id="productStats"></p>
-        <p class="product__desc">${esc(item.desc)}</p>
-        ${groupsOf(item).map(optionGroupHtml).join("")}
-        <div id="productParts"></div>
-        ${item.composition ? `<div class="product__block">
-          <h3 class="product__block-title">Состав</h3>
+        <p class="product__price" id="productPrice"></p>
+        <p class="product__desc" id="productDesc">${esc(item.desc)}</p>
+        <button type="button" class="product__more" id="productMore" hidden>Подробнее</button>
+        ${item.composition ? `<section class="psec">
+          <h3 class="psec__title">Состав</h3>
           <p class="product__composition">${esc(item.composition)}</p>
-          <div id="productAllergens"></div>
-        </div>` : ""}
-      </div>
-      ${pairs.length ? `<div class="pairing">
-        <h3 class="product__block-title pairing__title">С этим берут</h3>
-        <div class="pairing__list">${pairs.map(pairHtml).join("")}</div>
-      </div>` : ""}
-      <p class="product__note">Состав и КБЖУ ориентировочные</p>`;
+        </section>` : ""}
+        <section class="psec" id="productAllergens" hidden>
+          <h3 class="psec__title">Аллергены</h3>
+          <div class="allergens"></div>
+        </section>
+        ${groupsOf(item).length ? `<section class="psec">
+          <h3 class="psec__title">Опции</h3>
+          ${groupsOf(item).map(optionGroupHtml).join("")}
+        </section>` : ""}
+        ${item.parts ? `<section class="psec" id="productParts"></section>` : ""}
+        ${pairs.length ? `<section class="psec">
+          <h3 class="psec__title">С этим берут</h3>
+          <div class="pairing__list">${pairs.map(pairHtml).join("")}</div>
+        </section>` : ""}
+        <p class="product__note">Состав и КБЖУ ориентировочные</p>
+      </div>`;
     els.productBar.innerHTML = `
       <div class="stepper stepper--lg stepper--soft">
         <button type="button" data-step="-1" aria-label="Меньше">${ICON.minus}</button>
@@ -857,6 +866,14 @@
       </div>
       <button type="button" class="product__add" id="productAdd" data-add></button>`;
     renderProductDetails();
+    updateMoreLink();
+  }
+
+  // "Подробнее" только если описание не помещается в 3 строки. Мерить можно, когда экран уже виден
+  function updateMoreLink() {
+    const desc = $("#productDesc");
+    if (!desc || !desc.clientHeight) return;
+    $("#productMore").hidden = desc.scrollHeight <= desc.clientHeight + 1;
   }
 
   function pairHtml(item) {
@@ -881,28 +898,25 @@
     const stats = [amount, kcal != null ? `${kcal} ккал` : ""].filter(Boolean).join(" · ");
     $("#productStats").innerHTML = `${esc(stats)}${inCart ? `<span class="product__incart">в корзине: ${inCart}</span>` : ""}`;
     $("#productStats").hidden = !stats && !inCart;
+    // Цена за штуку с выбранными опциями. Пока обязательный выбор не сделан - "от"
+    $("#productPrice").innerHTML = optsValid(item, opts) ? money(unitPrice(item, opts)) : `<small>от</small> ${money(minPrice(item))}`;
 
+    const list = allergensOf(item, opts);
     const allergensEl = $("#productAllergens");
-    if (allergensEl) {
-      const list = allergensOf(item, opts);
-      allergensEl.innerHTML = list.length
-        ? `<div class="allergens"><span class="allergens__label">Аллергены</span>${list.map((a) => `<span class="allergen">${esc(a)}</span>`).join("")}</div>`
-        : "";
-    }
+    allergensEl.hidden = !list.length;
+    $(".allergens", allergensEl).innerHTML = list.map((a) => `<span class="allergen">${esc(a)}</span>`).join("");
 
     const partsEl = $("#productParts");
-    if (!item.parts) { partsEl.innerHTML = ""; return; }
+    if (!partsEl) return;
     const parts = partsOf(item, opts);
     const complete = optsValid(item, opts);
     const separately = parts.reduce((s, p) => s + p.price, 0);
     const save = separately - unitPrice(item, opts);
-    partsEl.innerHTML = `<div class="combo">
-      <h3 class="product__block-title">В наборе</h3>
+    partsEl.innerHTML = `<h3 class="psec__title">В наборе</h3>
       ${parts.map((p) => `<div class="combo__row"><span>${esc(p.title)}</span><span class="combo__price">${money(p.price)}</span></div>`).join("")}
       ${complete && save > 0
         ? `<div class="combo__sum"><span>Отдельно <s>${money(separately)}</s>, в комбо ${money(unitPrice(item, opts))}</span><span class="combo__save">Экономия ${money(save)}</span></div>`
-        : `<div class="combo__sum combo__sum--hint">Выберите состав, и мы посчитаем выгоду</div>`}
-    </div>`;
+        : `<div class="combo__sum combo__sum--hint">Выберите состав, и мы посчитаем выгоду</div>`}`;
   }
 
   function updateProductTotals() {
@@ -922,6 +936,12 @@
 
   els.productBody.addEventListener("click", (e) => {
     if (!product) return;
+    const more = e.target.closest("#productMore");
+    if (more) {
+      const open = $("#productDesc").classList.toggle("is-open");
+      more.textContent = open ? "Свернуть" : "Подробнее";
+      return;
+    }
     const pair = e.target.closest("[data-pair]");
     if (pair) {
       const item = byId.get(pair.dataset.pair);
