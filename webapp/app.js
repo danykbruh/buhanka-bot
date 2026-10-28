@@ -2095,7 +2095,11 @@
     if (inTg) {
       tg.ready();
       tg.expand();
-      if (tgAtLeast("7.7")) tg.disableVerticalSwipes();
+      // Свайп вниз не закрывает мини-апп: иначе он срабатывает вместо прокрутки меню.
+      // В клиентах до 7.7 метода нет, там просто пропускаем
+      if (tgAtLeast("7.7") && typeof tg.disableVerticalSwipes === "function") {
+        try { tg.disableVerticalSwipes(); } catch (e) { console.warn("disableVerticalSwipes", e); }
+      }
       tg.MainButton.onClick(runMain);
       if (tgAtLeast("6.1")) tg.BackButton.onClick(back);
       tg.onEvent("themeChanged", applyTheme);

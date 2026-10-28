@@ -107,7 +107,8 @@
 
 /* ============ База ============ */
 *, *::before, *::after { box-sizing: border-box; }
-html { -webkit-text-size-adjust: 100%; }
+/* Перепрокрутка страницы не уходит в Telegram и браузер (pull-to-refresh, жест "назад") */
+html { -webkit-text-size-adjust: 100%; overscroll-behavior: contain; }
 body {
   margin: 0;
   background: var(--bg);
@@ -116,6 +117,7 @@ body {
   -webkit-font-smoothing: antialiased;
   -webkit-tap-highlight-color: transparent;
   overflow-x: hidden;
+  overscroll-behavior: contain;
 }
 body.is-locked { overflow: hidden; }
 button {
@@ -181,7 +183,7 @@ h1, h2, h3, p { margin: 0; }
 /* ============ Вкладки ============ */
 .tabs {
   position: sticky; top: 0; z-index: 10;
-  display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none;
+  display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain;
   padding: 10px var(--gutter);
   background: var(--glass);
   -webkit-backdrop-filter: blur(14px) saturate(1.2);
@@ -441,7 +443,7 @@ body.has-fallback .cart-pad { height: calc(100px + var(--safe-bottom)); }
 .group.is-invalid .panel { border-color: var(--danger); }
 
 .slots {
-  display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none;
+  display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain;
   margin: 0 calc(-1 * var(--gutter)); padding: 2px var(--gutter) 6px; scroll-snap-type: x proximity;
 }
 .slots::-webkit-scrollbar { display: none; }
@@ -537,7 +539,7 @@ body.has-fallback .toast { bottom: calc(88px + var(--safe-bottom)); }
 .pairing { margin-top: 18px; }
 .pairing__title { padding: 0 var(--gutter); }
 .pairing__list {
-  display: flex; gap: 10px; overflow-x: auto; scrollbar-width: none; scroll-snap-type: x proximity;
+  display: flex; gap: 10px; overflow-x: auto; scrollbar-width: none; scroll-snap-type: x proximity; overscroll-behavior-x: contain;
   padding: 4px var(--gutter) 14px;
 }
 .pairing__list::-webkit-scrollbar { display: none; }
@@ -594,7 +596,7 @@ body.has-fallback .toast { bottom: calc(88px + var(--safe-bottom)); }
 }
 .bakery-top .screen__head { position: static; background: transparent; -webkit-backdrop-filter: none; backdrop-filter: none; }
 .bakery-tools { display: flex; flex-direction: column; gap: 10px; padding: 0 var(--gutter) 12px; }
-.cities { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; margin: 0 calc(-1 * var(--gutter)); padding: 0 var(--gutter); }
+.cities { display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; margin: 0 calc(-1 * var(--gutter)); padding: 0 var(--gutter); }
 .cities::-webkit-scrollbar { display: none; }
 .city {
   flex: none; height: 36px; padding: 0 14px; border-radius: 999px; white-space: nowrap;
@@ -891,7 +893,7 @@ html.in-tg .search-head .nav-back { display: none; }
 
 /* ============ Поиск: чипсы, недавние, результаты ============ */
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
-.chips--scroll { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding: 0 var(--gutter); }
+.chips--scroll { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; overscroll-behavior-x: contain; padding: 0 var(--gutter); }
 .chips--scroll::-webkit-scrollbar { display: none; }
 .chip {
   flex: none; height: 36px; padding: 0 14px; border-radius: 999px; white-space: nowrap;
