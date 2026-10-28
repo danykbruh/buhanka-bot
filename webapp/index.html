@@ -13,7 +13,7 @@
   <!-- Шрифты не блокируют запуск: если Google Fonts тормозит, меню откроется с системным шрифтом -->
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Oswald:wght@500;600&display=swap" media="print" onload="this.media='all'">
   <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Oswald:wght@500;600&display=swap"></noscript>
-  <link rel="stylesheet" href="style.css?v=20261028-2">
+  <link rel="stylesheet" href="style.css?v=20261028-3">
 </head>
 <body>
   <div id="app">
@@ -49,6 +49,7 @@
     <!-- Поиск -->
     <section class="screen screen--tab" id="searchScreen" role="dialog" aria-modal="true" aria-label="Поиск" hidden>
       <div class="screen__scroll">
+        <div class="search-top">
         <header class="search-head">
           <button class="nav-back" type="button" data-back aria-label="Назад"><svg viewBox="0 0 24 24" width="22" height="22"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M15 5l-7 7 7 7"/></svg></button>
           <label class="search search--lg">
@@ -59,6 +60,8 @@
             </button>
           </label>
         </header>
+        <div class="chips chips--scroll" id="searchFilters" role="group" aria-label="Фильтры"></div>
+        </div>
         <div id="searchBody"></div>
       </div>
     </section>
@@ -183,7 +186,7 @@
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
   </div>
 
-  <script src="bakeries.js?v=20261028-2"></script>
-  <script src="app.js?v=20261028-2"></script>
+  <script src="bakeries.js?v=20261028-3"></script>
+  <script src="app.js?v=20261028-3"></script>
 </body>
 </html>

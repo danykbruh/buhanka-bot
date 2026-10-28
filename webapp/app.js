@@ -240,6 +240,7 @@
     refreshCards();
     if (top() === "cart") renderCart();
     if (top() === "checkout") renderSummary();
+    if (top() === "search") renderSearch();
     syncMainButton();
     updateCartBadge();
   }
@@ -558,26 +559,151 @@
   }
 
   // ---------- Поиск: отдельный экран, ищет по всем категориям ----------
+  // Ищем по названию, составу и тегам (свои теги позиции, подгруппа, категория) без учёта регистра и ё,
+  // с синонимами из menu.json ("кофе" находит латте, "сладкое" находит пончики)
+  const SYNONYMS = Object.entries(MENU.searchSynonyms || {}).map(([key, values]) => [norm(key), values.map(norm)]);
+  const groupTitleOf = new Map();
+  categories.forEach((c) => (c.groups || []).forEach((g) => g.items.forEach((id) => groupTitleOf.set(id, g.title))));
+  const haystack = new Map(items.map((it) => {
+    const cat = categories.find((c) => c.id === it.cat);
+    const parts = [it.title, it.composition, ...(it.tags || []), groupTitleOf.get(it.id), cat && cat.title, cat && cat.tab];
+    return [it.id, norm(parts.filter(Boolean).join(" "))];
+  }));
+
+  // Слово, оно же без окончания ("пончики" -> "пончик") и его синонимы
+  function variantsOf(token) {
+    const out = new Set([token]);
+    if (token.length >= 5) { out.add(token.slice(0, -1)); out.add(token.slice(0, -2)); }
+    if (token.length >= 3) {
+      for (const [key, values] of SYNONYMS) if (key.startsWith(token) || token.startsWith(key)) values.forEach((v) => out.add(v));
+    }
+    return [...out];
+  }
+
+  // Для комбо аллергены всех возможных составляющих: фильтр "Без глютена" не пропустит набор с выпечкой
+  function allergensAll(item) {
+    if (!item.parts) return item.allergens || [];
+    const ids = item.parts.flatMap((p) => (p.group ? ((groupsOf(item).find((g) => g.id === p.group) || {}).choices || []).map((c) => c.id) : [p.id]));
+    return [...new Set(ids.flatMap((id) => (byId.get(id) || {}).allergens || []))];
+  }
+
+  const SEARCH_FILTERS = [
+    { id: "gluten", title: "Без глютена", test: (it) => !allergensAll(it).includes("глютен") },
+    { id: "cheap", title: "До 200 ₽", test: (it) => minPrice(it) <= 200 },
+    { id: "sweet", title: "Сладкое", test: (it) => (it.tags || []).includes("сладкое") },
+    { id: "hearty", title: "Сытное", test: (it) => (it.tags || []).includes("сытное") },
+    { id: "drinks", title: "Напитки", test: (it) => it.cat === "drinks" },
+  ];
+  const POPULAR_QUERIES = ["Круассаны", "Кофе", "Пончики", "Сытное", "Комбо", "Для детей"];
+
+  // Недавние запросы: до 5, в CloudStorage с копией в localStorage
+  const KEY_RECENT = "buhanka_recent";
+  const RECENT_MAX = 5;
+  const parseRecent = (raw) => {
+    try {
+      const list = JSON.parse(raw || "[]");
+      return Array.isArray(list) ? list.filter((x) => typeof x === "string" && x.trim()).slice(0, RECENT_MAX) : [];
+    } catch { return []; }
+  };
+  let recent = parseRecent(store.get(KEY_RECENT));
+  function saveRecent(q) {
+    q = q.trim().slice(0, 40);
+    if (q.length < 2) return;
+    recent = [q, ...recent.filter((x) => norm(x) !== norm(q))].slice(0, RECENT_MAX);
+    cloud.set(KEY_RECENT, JSON.stringify(recent));
+  }
+
   let searchQuery = "";
+  const activeFilters = new Set();
+  const ICON_CLOCK = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></g></svg>';
+
+  // Совпадения в названии жирным. norm не меняет длину строки, поэтому позиции совпадают с исходным текстом
+  function highlight(title, tokens) {
+    const n = norm(title);
+    const ranges = [];
+    for (const t of tokens) for (const v of variantsOf(t)) {
+      for (let i = n.indexOf(v); i !== -1 && v; i = n.indexOf(v, i + 1)) ranges.push([i, i + v.length]);
+    }
+    ranges.sort((a, b) => a[0] - b[0]);
+    let html = "", pos = 0;
+    for (const [a, b] of ranges) {
+      if (b <= pos) continue;
+      const start = Math.max(a, pos);
+      html += esc(title.slice(pos, start)) + `<b>${esc(title.slice(start, b))}</b>`;
+      pos = b;
+    }
+    return html + esc(title.slice(pos));
+  }
+
+  function resultHtml(item, tokens) {
+    const { kcal } = statsOf(item, defaultOpts(item));
+    const meta = [cardLine(item), kcal ? `${kcal} ккал` : ""].filter(Boolean).join(" · ");
+    const price = hasPriceRange(item) ? `<small>от</small> ${money(minPrice(item))}` : money(item.price);
+    const qty = itemQty(item.id);
+    return `<article class="result" data-id="${item.id}" tabindex="0" aria-label="${esc(item.title)}, ${esc(money(minPrice(item)))}">
+      <img class="result__img" src="${imgSrc(item.id)}" alt="" loading="lazy" decoding="async" width="64" height="64"${imgPosAttr(item)}>
+      <div class="result__text">
+        <div class="result__title">${highlight(item.title, tokens)}</div>
+        ${meta ? `<div class="result__meta">${esc(meta)}</div>` : ""}
+        <div class="result__price">${price}</div>
+      </div>
+      <button type="button" class="result__add" data-add-result aria-label="Добавить: ${esc(item.title)}">${qty ? `<b>${qty}</b>` : ICON.plus}</button>
+    </article>`;
+  }
+
+  function renderSearchFilters() {
+    $("#searchFilters").innerHTML = SEARCH_FILTERS
+      .map((f) => `<button type="button" class="chip" data-filter="${f.id}" aria-pressed="${activeFilters.has(f.id)}">${esc(f.title)}</button>`)
+      .join("");
+  }
 
   function renderSearch() {
-    const q = norm(searchQuery.trim());
-    if (!q) {
-      els.searchBody.innerHTML = `<p class="search-hint">Введите название или состав: круассан, латте, лосось</p>`;
+    const tokens = norm(searchQuery.trim()).split(/\s+/).filter(Boolean);
+    const filters = SEARCH_FILTERS.filter((f) => activeFilters.has(f.id));
+    if (!tokens.length && !filters.length) {
+      // До ввода: недавние запросы и популярное
+      els.searchBody.innerHTML = `
+        ${recent.length ? `<section class="search-block">
+          <div class="search-block__head"><h3 class="search-sub">Недавние запросы</h3><button type="button" class="link-btn" data-recent-clear>Очистить</button></div>
+          <div class="recent">${recent.map((r) => `<button type="button" class="recent__item" data-q="${esc(r)}">${ICON_CLOCK}<span>${esc(r)}</span></button>`).join("")}</div>
+        </section>` : ""}
+        <section class="search-block">
+          <h3 class="search-sub">Популярное</h3>
+          <div class="chips">${POPULAR_QUERIES.map((q) => `<button type="button" class="chip" data-q="${esc(q)}">${esc(q)}</button>`).join("")}</div>
+        </section>`;
       return;
     }
-    const found = items.filter((it) => norm(`${it.title} ${it.desc} ${it.composition || ""} ${it.short || ""}`).includes(q));
-    els.searchBody.innerHTML = found.length
-      ? `<div class="section"><p class="list-count">Найдено: ${itemsCount(found.length)}</p><div class="grid">${found.map(cardHtml).join("")}</div></div>`
-      : `<div class="empty">
+    const variants = tokens.map(variantsOf);
+    const found = items.filter((it) => {
+      const h = haystack.get(it.id);
+      return variants.every((vs) => vs.some((v) => h.includes(v))) && filters.every((f) => f.test(it));
+    });
+    if (found.length) {
+      els.searchBody.innerHTML = `<p class="list-count search-count">Найдено: ${itemsCount(found.length)}</p>
+        <div class="results">${found.map((it) => resultHtml(it, tokens)).join("")}</div>`;
+    } else {
+      const popular = (MENU.popular || []).map((id) => byId.get(id)).filter(Boolean).slice(0, 4);
+      els.searchBody.innerHTML = `<div class="empty empty--search">
           <div class="icon-circle" aria-hidden="true"><svg viewBox="0 0 56 56" width="56" height="56"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="25" cy="25" r="12"/><path d="m34 34 9 9"/></g></svg></div>
-          <p class="empty__title">Ничего не нашлось</p>
-          <p class="empty__text">Попробуйте другое слово, например "круассан" или "чай"</p>
-        </div>`;
+          <p class="empty__title">Ничего не нашли</p>
+          <p class="empty__text">${filters.length ? "Попробуйте другое слово или уберите фильтры" : "Попробуйте другое слово, например «круассан» или «чай»"}</p>
+        </div>
+        ${popular.length ? `<section class="search-block"><h3 class="search-sub">Популярное</h3>
+          <div class="results">${popular.map((it) => resultHtml(it, [])).join("")}</div></section>` : ""}`;
+    }
     markLoadedImages(els.searchBody);
   }
 
+  function setSearchQuery(q, remember) {
+    searchQuery = q;
+    els.searchInput.value = q;
+    els.searchClear.hidden = !q;
+    if (remember) saveRecent(q);
+    renderSearch();
+  }
+
   function openSearch() {
+    renderSearchFilters();
     renderSearch();
     navigate("search");
     // Фокус сразу, пока жест гостя ещё "свежий": так на телефоне откроется клавиатура
@@ -585,18 +711,46 @@
   }
 
   els.searchOpen.addEventListener("click", openSearch);
-  els.searchInput.addEventListener("input", () => {
-    searchQuery = els.searchInput.value;
-    els.searchClear.hidden = !searchQuery;
+  els.searchInput.addEventListener("input", () => setSearchQuery(els.searchInput.value, false));
+  els.searchInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") { saveRecent(searchQuery); els.searchInput.blur(); }
+  });
+  els.searchClear.addEventListener("click", () => {
+    setSearchQuery("", false);
+    els.searchInput.focus();
+  });
+  $("#searchFilters").addEventListener("click", (e) => {
+    const chip = e.target.closest("[data-filter]");
+    if (!chip) return;
+    const id = chip.dataset.filter;
+    if (activeFilters.has(id)) activeFilters.delete(id);
+    else activeFilters.add(id);
+    chip.setAttribute("aria-pressed", String(activeFilters.has(id)));
+    haptic.select();
     renderSearch();
   });
-  els.searchInput.addEventListener("keydown", (e) => { if (e.key === "Enter") els.searchInput.blur(); });
-  els.searchClear.addEventListener("click", () => {
-    els.searchInput.value = "";
-    searchQuery = "";
-    els.searchClear.hidden = true;
-    renderSearch();
-    els.searchInput.focus();
+
+  els.searchBody.addEventListener("click", (e) => {
+    const chip = e.target.closest("[data-q]");
+    if (chip) { haptic.select(); setSearchQuery(chip.dataset.q, true); return; }
+    if (e.target.closest("[data-recent-clear]")) {
+      recent = [];
+      cloud.set(KEY_RECENT, "[]");
+      renderSearch();
+      return;
+    }
+    const row = e.target.closest(".result");
+    if (!row) return;
+    const item = byId.get(row.dataset.id);
+    saveRecent(searchQuery); // запрос, по которому что-то выбрали, попадает в недавние
+    if (!e.target.closest("[data-add-result]") || needsChoice(item)) { openProduct(item.id); return; }
+    if (!addToCart(item.id, defaultOpts(item))) return;
+    haptic.impact("light");
+    toast(`${item.title} - в корзине`);
+  });
+  els.searchBody.addEventListener("keydown", (e) => {
+    const row = e.target.closest && e.target.closest(".result");
+    if (row && e.target === row && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); openProduct(row.dataset.id); }
   });
 
   // ---------- Липкие вкладки: тень, когда прилипли ----------
@@ -706,7 +860,8 @@
   }
 
   document.addEventListener("click", (e) => { if (e.target.closest("[data-back]")) back(); });
-  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && stack.length) back(); });
+  // Escape работает как "назад". preventDefault: иначе браузер ещё и очистит поле поиска
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape" && stack.length) { e.preventDefault(); back(); } });
 
   function syncBackButton() {
     if (!tgAtLeast("6.1")) return;
@@ -1769,6 +1924,12 @@
       favoritesChanged();
     }
     history = mergeHistory(parseHistory(historyRaw), history);
+    const cloudRecent = parseRecent(await cloud.get(KEY_RECENT));
+    if (cloudRecent.length && cloudRecent.join("|") !== recent.join("|")) {
+      recent = cloudRecent;
+      store.set(KEY_RECENT, JSON.stringify(recent));
+      if (top() === "search") renderSearch();
+    }
     store.set(KEY_HISTORY, JSON.stringify(history));
     if (top() === "orders") renderOrders();
     if (!selectedBakery && bakeryById.has(bakeryId)) {

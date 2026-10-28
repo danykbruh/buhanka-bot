@@ -860,11 +860,11 @@ body.has-tabbar .toast { bottom: calc(76px + var(--safe-bottom)); }
 .search--button { width: 100%; text-align: left; color: var(--hint); cursor: text; }
 .search--button:active { transform: none; }
 .search__placeholder { padding-left: 40px; font-size: 16px; color: var(--hint); opacity: .85; }
-.search-head {
-  position: sticky; top: 0; z-index: 2; display: flex; align-items: center; gap: 8px;
-  padding: 10px var(--gutter); background: var(--glass);
-  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+.search-top {
+  position: sticky; top: 0; z-index: 2; padding-bottom: 10px; background: var(--glass);
+  -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); border-bottom: 1px solid var(--line);
 }
+.search-head { display: flex; align-items: center; gap: 8px; padding: 10px var(--gutter); }
 .search-head .nav-back { margin-left: -6px; flex: none; }
 html.in-tg .search-head .nav-back { display: none; }
 .search--lg { flex: 1; height: 52px; border-radius: 16px; }
@@ -888,3 +888,47 @@ html.in-tg .search-head .nav-back { display: none; }
   background: var(--accent-fill); color: var(--on-accent);
 }
 .product__add:active { background: var(--accent-fill-press); }
+
+/* ============ Поиск: чипсы, недавние, результаты ============ */
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chips--scroll { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; padding: 0 var(--gutter); }
+.chips--scroll::-webkit-scrollbar { display: none; }
+.chip {
+  flex: none; height: 36px; padding: 0 14px; border-radius: 999px; white-space: nowrap;
+  font-family: var(--font); font-size: 14px; font-weight: 500; color: var(--text);
+  border: 1px solid var(--line); background: var(--bg);
+}
+.chip[aria-pressed="true"] { background: var(--accent-fill); border-color: var(--accent-fill); color: var(--on-accent); font-weight: 600; }
+.search-block { margin: 20px var(--gutter) 0; }
+.search-block__head { display: flex; justify-content: space-between; align-items: baseline; }
+.search-sub {
+  margin-bottom: 12px; font-family: var(--font); font-size: 13px; font-weight: 600;
+  text-transform: uppercase; letter-spacing: .06em; color: var(--hint);
+}
+.recent { display: flex; flex-direction: column; }
+.recent__item {
+  display: flex; align-items: center; gap: 12px; min-height: 44px; text-align: left;
+  font-family: var(--font); font-size: 15px; color: var(--text); border-bottom: 1px solid var(--line);
+}
+.recent__item svg { flex: none; color: var(--hint); }
+.recent__item:active { transform: none; opacity: .6; }
+.search-count { margin: 14px var(--gutter) 6px; }
+.results { display: flex; flex-direction: column; }
+.search-block .results { margin: 0 calc(-1 * var(--gutter)); }
+.result {
+  display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; align-items: center; gap: 12px;
+  padding: 10px var(--gutter); cursor: pointer; border-bottom: 1px solid var(--line);
+}
+.result:active { background: var(--accent-soft); }
+.result__img { width: 64px; height: 64px; border-radius: 14px; object-fit: cover; object-position: center 70%; background: var(--placeholder); }
+.result__title { font-family: var(--font); font-size: 15px; font-weight: 500; line-height: 1.3; }
+.result__title b { font-weight: 700; }
+.result__meta { margin-top: 2px; font-size: 13px; color: var(--hint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.result__price { margin-top: 4px; font-family: var(--font); font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.result__price small { font-size: 12px; font-weight: 600; color: var(--hint); }
+.result__add {
+  width: 36px; height: 36px; border-radius: 50%; display: grid; place-items: center;
+  background: var(--accent-fill); color: var(--on-accent); font-size: 14px;
+}
+.result__add:active { background: var(--accent-fill-press); }
+.empty--search { padding: 32px var(--gutter) 8px; }
