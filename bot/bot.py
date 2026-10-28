@@ -35,8 +35,8 @@ from aiogram.types import (BotCommand, CallbackQuery, ErrorEvent, FSInputFile, I
                            WebAppInfo)
 from dotenv import load_dotenv
 
-from order import (DEFAULT_BAKERIES_FILE, DEFAULT_MENU_FILE, DEFAULT_PROMOS_FILE, WEBAPP_DIR, Bakery, Menu, Order, OrderError,
-                   Pricing, Promo, fingerprint, load_bakeries, load_menu, load_promos, parse_order, price_order)
+from order import (DEFAULT_BAKERIES_FILE, DEFAULT_MENU_FILE, DEFAULT_PROMOS_FILE, WEBAPP_DIR, Bakery, Menu, Mismatch, Order,
+                   OrderError, Pricing, Promo, fingerprint, load_bakeries, load_menu, load_promos, validate_order)
 from storage import BonusState, Storage, StoredOrder
 
 BOT_DIR = Path(__file__).resolve().parent
@@ -223,13 +223,21 @@ def money_lines(pricing: Pricing) -> list[str]:
     return lines
 
 
-def receipt_text(order: Order, pricing: Pricing, number: int, now: datetime) -> str:
+def mismatch_note(mismatch: Mismatch, pricing: Pricing) -> str:
+    """Гость видел в корзине другую сумму: заказ принят по меню бота, объясняем итог."""
+    was = f" (в корзине было {money(mismatch.sent)})" if mismatch.sent is not None else ""
+    return (f"ℹ️ Цены в корзине отличались от актуального меню, поэтому мы пересчитали заказ{was}. "
+            f"К оплате: <b>{money(pricing.total)}</b>.")
+
+
+def receipt_text(order: Order, pricing: Pricing, number: int, now: datetime, mismatch: Mismatch | None = None) -> str:
     parts = [
         f"🧾 <b>Заказ №{number} оформлен</b>",
         "",
         items_block(order),
         "",
         *money_lines(pricing),
+        *([mismatch_note(mismatch, pricing), ""] if mismatch else []),
         f"📍 Где забрать: <b>{escape(order.bakery.address)}</b>",
         f"🕒 Самовывоз: <b>{pickup_label(order.pickup, now)}</b>",
         f"👤 Имя: {escape(order.name)}",
@@ -499,14 +507,18 @@ def build_router(config: Config, menu: Menu, bakeries: dict[str, Bakery], storag
 
         now = datetime.now(timezone.utc)
         try:
-            order = parse_order(raw, menu, bakeries, now)
             # Скидки считает только бот: промокод по bot/promos.json, подарочный кофе по штампам из базы
             bonus = storage.bonus_state(user_id, menu.stamps_per_reward)
-            pricing = price_order(order, menu, promos, now, free_coffee=bonus.available > 0)
+            checked = validate_order(raw, menu, bakeries, promos, now, free_coffee=bonus.available > 0,
+                                     bot_token=config.token, user_id=user_id)
         except OrderError as e:
             log.warning("Заказ от %s не принят: %s; data=%.300r", user_id, e, raw)
             await message.answer(e.user_message, reply_markup=keyboard_for(user_id))
             return
+        order, pricing, mismatch = checked.order, checked.pricing, checked.mismatch
+        if mismatch:
+            log.warning("Сумма не совпала: user_id=%s expected=%s sent=%s (%s)", user_id, mismatch.expected,
+                        mismatch.sent, "; ".join(mismatch.details))
 
         summary = ", ".join(f"{line.title} × {line.qty}" for line in order.lines)
         number = storage.add_order(
@@ -517,7 +529,7 @@ def build_router(config: Config, menu: Menu, bakeries: dict[str, Bakery], storag
         )
         log.info("Заказ №%s от %s на %s (скидки %s + %s), %s", number, user_id, pricing.total,
                  pricing.promo_discount, pricing.bonus_discount, order.bakery.id)
-        await message.answer(receipt_text(order, pricing, number, now), reply_markup=keyboard_for(user_id))
+        await message.answer(receipt_text(order, pricing, number, now, mismatch), reply_markup=keyboard_for(user_id))
 
         if config.admin_chat_id is not None:
             try:

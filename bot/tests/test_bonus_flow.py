@@ -140,3 +140,31 @@ def test_invalid_promo_rejects_order_with_clear_message(env):
         assert db.last_number() is None  # заказ не сохранён
 
     asyncio.run(scenario())
+
+
+def test_price_swap_accepted_at_bot_sum_with_note_and_log(env, caplog):
+    db, h, bot = env
+
+    async def scenario():
+        raw = json.loads(order_json([("latte", {"size": "400"}, 320, 2)]))
+        raw["items"][0]["price"], raw["subtotal"], raw["total"] = 1, 2, 2
+        receipt = await place(h, bot, json.dumps(raw))
+        assert "Итого: 640" in receipt
+        assert f"пересчитали заказ (в корзине было {b.money(2)}). К оплате: <b>{b.money(640)}</b>" in receipt
+        assert "—" not in receipt and "–" not in receipt
+        assert db.get_order(1001).total == 640
+        assert f"Сумма не совпала: user_id={GUEST} expected=640 sent=2" in caplog.text
+
+    with caplog.at_level("WARNING"):
+        asyncio.run(scenario())
+
+
+def test_broken_payload_rejected_politely(env):
+    db, h, bot = env
+
+    async def scenario():
+        reply = await place(h, bot, '{"items": [{"id": "latte", "qty": -5}]}')
+        assert reply == o.MSG_MENU_CHANGED or reply.startswith("🧺")
+        assert "qty" not in reply and db.last_number() is None
+
+    asyncio.run(scenario())

@@ -165,33 +165,36 @@ def test_last_valid_day_inclusive():
 
 # ---------- Скидка из мини-аппа против скидки бота ----------
 
-def test_client_discount_mismatch_rejected():
-    with pytest.raises(o.OrderError) as e:
-        price([line(LATTE_400)], MORNING, "KOFE", 100)
-    assert e.value.user_message == o.MSG_PROMO_CHANGED
+# Расхождение не отклоняет заказ: сумма считается по боту, а mismatch нужен для сообщения гостю и лога
+
+def check(raw, now, free_coffee=False):
+    return o.validate_order(raw, MENU, BAKERIES, PROMOS, now, free_coffee)
+
+
+def test_client_discount_mismatch_uses_bot_discount():
+    r = check(payload([line(LATTE_400)], MORNING, "KOFE", 100), MORNING)
+    assert r.pricing.promo_discount == 64 and r.pricing.total == 256
+    assert r.mismatch.expected == 256 and r.mismatch.sent == 220
 
 
 def test_client_claims_discount_without_code():
-    with pytest.raises(o.OrderError) as e:
-        price([line(LATTE_400)], EVENING, None, 50)
-    assert e.value.user_message == o.MSG_PROMO_CHANGED
+    r = check(payload([line(LATTE_400)], EVENING, None, 50), EVENING)
+    assert r.pricing.total == 320 and r.mismatch.sent == 270
 
 
 def test_unchecked_preview_accepts_bot_discount():
-    # Мини-апп не смог проверить код (discount: null) - бот применяет свою скидку
-    assert price([line(CROISSANT, 2)], EVENING, "BUHANKA10", None).promo_discount == 38
+    # Мини-апп не смог проверить код (discount: null) - бот применяет свою скидку, это не расхождение
+    r = check(payload([line(CROISSANT, 2)], EVENING, "BUHANKA10", None), EVENING)
+    assert r.pricing.promo_discount == 38 and r.mismatch is None
 
 
-def test_total_must_match_subtotal_minus_discount():
-    data = json.loads(payload([line(CROISSANT)], EVENING, "BUHANKA10", 19))
-    data["total"] = 1
-    with pytest.raises(o.OrderError):
-        o.parse_order(json.dumps(data), MENU, BAKERIES, EVENING)
+def test_correct_discount_is_not_mismatch():
+    assert check(payload([line(CROISSANT, 2)], EVENING, "BUHANKA10", 38), EVENING).mismatch is None
 
 
-def test_discount_bigger_than_subtotal_rejected():
-    with pytest.raises(o.OrderError):
-        price([line(CROISSANT)], EVENING, "BUHANKA10", 500)
+def test_discount_bigger_than_subtotal_ignored():
+    r = check(payload([line(CROISSANT)], EVENING, "BUHANKA10", 500), EVENING)
+    assert r.pricing.total == 171 and r.mismatch.expected == 171
 
 
 # ---------- Каждый 6-й кофе в подарок ----------

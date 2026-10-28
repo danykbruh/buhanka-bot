@@ -1,13 +1,15 @@
 """Проверка заказа из мини-аппа.
 
-Бот не доверяет ценам и сумме из мини-аппа: пересчитывает каждую позицию по webapp/menu.json
-(тот же файл читает мини-апп), проверяет лимиты, пекарню и слот самовывоза.
-Здесь нет ничего про Telegram, поэтому функции легко проверять отдельно.
+Бот не доверяет ценам и сумме из мини-аппа: от клиента берутся только id, количество, опции,
+промокод, пекарня, время самовывоза, имя и комментарий. Цены пересчитываются по webapp/menu.json
+(тот же файл читает мини-апп). Цены и суммы клиента нужны только чтобы заметить расхождение:
+заказ всё равно принимается по сумме бота, а гость видит итог. Точка входа - validate_order.
 """
 
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import math
 import re
@@ -16,6 +18,7 @@ from datetime import date, datetime, time, timedelta, timezone
 from html import escape
 from pathlib import Path
 from typing import Any
+from urllib.parse import parse_qsl
 
 WEBAPP_DIR = Path(__file__).resolve().parent.parent / "webapp"
 DEFAULT_MENU_FILE = WEBAPP_DIR / "menu.json"
@@ -31,12 +34,17 @@ TIME_RE = re.compile(r"^([01]\d|2[0-3]):[0-5]\d$")
 # строились по более раннему времени. Насколько назад бот допускает такое отставание.
 SLOT_GRACE = timedelta(minutes=20)
 
+# Telegram.WebApp.sendData передаёт не больше 4096 байт, всё крупнее прислано в обход мини-аппа
+MAX_PAYLOAD_BYTES = 4096
+# Насколько старой может быть подпись initData (мини-апп могли долго не закрывать)
+INIT_DATA_MAX_AGE = timedelta(hours=24)
+
 # Тексты для гостя по типу ошибки
 MSG_INVALID = "😕 Не получилось прочитать заказ. Откройте меню ещё раз и попробуйте снова."
 MSG_MENU_CHANGED = "🔄 Меню обновилось, откройте его заново и соберите заказ ещё раз."
 MSG_SLOT = "🕒 Это время самовывоза уже недоступно. Откройте меню и выберите другое."
 MSG_BAKERY = "📍 Не нашли выбранную пекарню. Откройте меню и выберите пекарню заново."
-MSG_PROMO_CHANGED = "🏷 Скидка по промокоду изменилась. Откройте корзину заново, мы пересчитаем сумму."
+MSG_TOO_BIG = "🧺 Заказ получился слишком большим для одного сообщения. Разделите его на два."
 _PROMO_FIX = " Уберите или замените код в корзине и оформите заказ снова."
 
 
@@ -177,7 +185,11 @@ class Order:
     name: str
     comment: str
     promo_code: str | None = None
-    client_discount: int | None = None  # скидка, которую показал мини-апп; None - не проверял
+    # Что видел гость в мини-аппе. Только для сравнения, в расчёте не участвует
+    client_discount: int | None = None  # скидка по промокоду; None - мини-апп не проверял код
+    client_total: int | None = None     # сумма к оплате; None - не прислана
+    client_price_diff: tuple[str, ...] = ()  # позиции, где цена клиента не совпала с меню
+    client_subtotal_diff: bool = False
 
     @property
     def total(self) -> int:
@@ -304,7 +316,13 @@ def check_pickup(pickup: object, bakery: Bakery, menu: Menu, now: datetime) -> d
 
 
 def parse_order(raw: str, menu: Menu, bakeries: dict[str, Bakery], now: datetime) -> Order:
-    """Разбирает и проверяет заказ. Любое несоответствие - OrderError с текстом для гостя."""
+    """Разбирает и проверяет заказ. Неверные данные - OrderError с текстом для гостя.
+    Цены и суммы клиента здесь не проверяются, а только запоминаются для сравнения."""
+    if not isinstance(raw, str):
+        raise OrderError("не строка")
+    size = len(raw.encode("utf-8", "replace"))
+    if size > MAX_PAYLOAD_BYTES:
+        raise OrderError(f"payload: {size} байт при лимите {MAX_PAYLOAD_BYTES}", MSG_TOO_BIG)
     try:
         data = json.loads(raw)
     except (json.JSONDecodeError, TypeError) as e:
@@ -321,7 +339,7 @@ def parse_order(raw: str, menu: Menu, bakeries: dict[str, Bakery], now: datetime
             f"🧺 В одном заказе не больше {menu.max_lines} позиций. Откройте меню и уберите лишнее.",
         )
 
-    lines = []
+    lines, price_diff = [], []
     for n, it in enumerate(raw_items, 1):
         if not isinstance(it, dict):
             raise OrderError(f"items[{n}]: не объект")
@@ -335,25 +353,21 @@ def parse_order(raw: str, menu: Menu, bakeries: dict[str, Bakery], now: datetime
                 f"🧺 Одной позиции можно заказать от 1 до {menu.max_qty} штук. Откройте меню и поправьте количество.",
             )
         price, label = price_line(item, it.get("opts", {}))
-        if _int(it.get("price")) != price:
-            raise OrderError(f"items[{n}] {item['id']}: цена {it.get('price')!r:.20}, по меню {price}", MSG_MENU_CHANGED)
+        if "price" in it and _int(it.get("price")) != price:
+            price_diff.append(f"{item['id']}: цена {it.get('price')!r:.20} вместо {price}")
         lines.append(OrderLine(item_id=item["id"], title=item["title"], options=label, qty=qty, price=price))
 
     # subtotal - сумма по ценам до скидок. Старые версии мини-аппа присылали только total
     subtotal = sum(line.sum for line in lines)
     client_subtotal = data.get("subtotal", data.get("total"))
-    if _int(client_subtotal) != subtotal:
-        raise OrderError(f"subtotal: {client_subtotal!r:.20}, по меню {subtotal}", MSG_MENU_CHANGED)
 
     promo_raw = data.get("promo")
     if promo_raw is not None and not isinstance(promo_raw, str):
         raise OrderError("promo: ожидалась строка")
     promo_code = normalize_code(promo_raw)[:40] if promo_raw and promo_raw.strip() else None
-    client_discount = data.get("discount")
-    if client_discount is not None and (_int(client_discount) is None or not 0 <= client_discount <= subtotal):
-        raise OrderError(f"discount: {client_discount!r:.20}")
-    if "subtotal" in data and _int(data.get("total")) != subtotal - (client_discount or 0):
-        raise OrderError(f"total: {data.get('total')!r:.20} при subtotal {subtotal} и скидке {client_discount}")
+    # Неверная скидка или сумма от клиента - не повод отказать: бот посчитает свои
+    client_discount = _int(data.get("discount"))
+    client_total = _int(data.get("total"))
 
     # Адрес берём из своего списка по id, а не из присланных данных
     raw_bakery = data.get("bakery")
@@ -370,6 +384,9 @@ def parse_order(raw: str, menu: Menu, bakeries: dict[str, Bakery], now: datetime
         comment=_text(data.get("comment"), "comment", menu.comment_max, required=False),
         promo_code=promo_code,
         client_discount=client_discount,
+        client_total=client_total,
+        client_price_diff=tuple(price_diff),
+        client_subtotal_diff=client_subtotal is not None and _int(client_subtotal) != subtotal,
     )
 
 
@@ -416,10 +433,6 @@ def price_order(order: Order, menu: Menu, promos: dict[str, Promo], now: datetim
                              f"☕ Промокод «{escape(promo.code)}» действует только на кофе, а в заказе его нет." + _PROMO_FIX)
         promo_discount = eligible * promo.percent // 100
 
-    # Мини-апп показывал свою скидку: если она разошлась с нашей, гость должен увидеть настоящую сумму
-    if order.client_discount is not None and order.client_discount != promo_discount:
-        raise OrderError(f"discount: мини-апп {order.client_discount}, бот {promo_discount}", MSG_PROMO_CHANGED)
-
     # Подарок - самый дорогой кофе в заказе. Скидка по промокоду на эту чашку уже дана,
     # поэтому бонус обнуляет только остаток её цены
     bonus_title, bonus_discount = None, 0
@@ -431,3 +444,90 @@ def price_order(order: Order, menu: Menu, promos: dict[str, Promo], now: datetim
 
     return Pricing(subtotal=subtotal, promo=promo, promo_discount=promo_discount,
                    bonus_title=bonus_title, bonus_discount=bonus_discount, coffee_qty=coffee_qty)
+
+
+# ---------- Проверка целиком ----------
+
+@dataclass(frozen=True)
+class Mismatch:
+    """Сумма клиента разошлась с пересчитанной. expected - что гость увидел бы в корзине по меню бота."""
+    expected: int
+    sent: int | None
+    details: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class ValidatedOrder:
+    order: Order
+    pricing: Pricing
+    mismatch: Mismatch | None
+    init_user_id: int | None  # id гостя из проверенной initData, если она была
+
+
+def find_mismatch(order: Order, pricing: Pricing) -> Mismatch | None:
+    """Сравнивает то, что видел гость, с пересчётом. Подарочный кофе мини-апп не вычитает, поэтому
+    сравнивается сумма до бонуса. Скидку None мини-апп шлёт, когда не смог проверить код."""
+    expected = pricing.subtotal - (pricing.promo_discount if order.client_discount is not None else 0)
+    details = list(order.client_price_diff)
+    if order.client_subtotal_diff:
+        details.append("subtotal")
+    if order.client_discount is not None and order.client_discount != pricing.promo_discount:
+        details.append(f"скидка {order.client_discount} вместо {pricing.promo_discount}")
+    if order.client_total is not None and order.client_total != expected:
+        details.append(f"итог {order.client_total} вместо {expected}")
+    if not details:
+        return None
+    return Mismatch(expected=expected, sent=order.client_total, details=tuple(details))
+
+
+def validate_init_data(init_data: str, bot_token: str, now: datetime,
+                       max_age: timedelta = INIT_DATA_MAX_AGE) -> dict[str, str]:
+    """Подпись initData по документации Telegram ("Validating data received via the Mini App"):
+    secret_key = HMAC_SHA256(key="WebAppData", msg=bot_token),
+    hash = hex(HMAC_SHA256(key=secret_key, msg=data_check_string)),
+    где data_check_string - все поля, кроме hash, в виде key=value по алфавиту через перевод строки."""
+    if not isinstance(init_data, str) or len(init_data) > MAX_PAYLOAD_BYTES:
+        raise OrderError("initData: не строка или слишком длинная")
+    try:
+        fields = dict(parse_qsl(init_data, keep_blank_values=True, strict_parsing=True))
+    except ValueError as e:
+        raise OrderError("initData: не разбирается") from e
+    received = fields.pop("hash", "")
+    check_string = "\n".join(f"{k}={v}" for k, v in sorted(fields.items()))
+    secret = hmac.new(b"WebAppData", bot_token.encode(), hashlib.sha256).digest()
+    expected = hmac.new(secret, check_string.encode(), hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, received):
+        raise OrderError("initData: неверная подпись")
+    auth_date = fields.get("auth_date", "")
+    if not auth_date.isdigit() or now - datetime.fromtimestamp(int(auth_date), timezone.utc) > max_age:
+        raise OrderError(f"initData: устарела или без auth_date ({auth_date:.12})")
+    return fields
+
+
+def init_data_user_id(fields: dict[str, str]) -> int | None:
+    try:
+        user = json.loads(fields.get("user", ""))
+    except json.JSONDecodeError:
+        return None
+    return _int(user.get("id")) if isinstance(user, dict) else None
+
+
+def validate_order(payload: str, menu: Menu, bakeries: dict[str, Bakery], promos: dict[str, Promo],
+                   now: datetime, free_coffee: bool, bot_token: str | None = None,
+                   user_id: int | None = None) -> ValidatedOrder:
+    """Полная проверка заказа: размер, позиции и опции (в том числе комбо), промокод, подарочный кофе,
+    время самовывоза и подпись initData, если мини-апп её прислал. Неверный заказ - OrderError с вежливым
+    текстом без технических подробностей. Расхождение цен или суммы не ошибка: заказ считается
+    по ценам бота, а в ответе есть mismatch, чтобы предупредить гостя и записать в лог."""
+    order = parse_order(payload, menu, bakeries, now)
+
+    init_user_id = None
+    init_data = json.loads(payload).get("initData")
+    if init_data and bot_token:
+        init_user_id = init_data_user_id(validate_init_data(init_data, bot_token, now))
+        if user_id is not None and init_user_id is not None and init_user_id != user_id:
+            raise OrderError(f"initData: гость {init_user_id}, а сообщение от {user_id}")
+
+    pricing = price_order(order, menu, promos, now, free_coffee)
+    return ValidatedOrder(order=order, pricing=pricing, mismatch=find_mismatch(order, pricing),
+                          init_user_id=init_user_id)

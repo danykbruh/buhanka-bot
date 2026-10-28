@@ -1681,8 +1681,14 @@
       name: name.slice(0, LIMITS.nameMax),
       comment: els.comment.value.trim().slice(0, LIMITS.commentMax),
     };
-    const json = JSON.stringify(order);
-    if (new TextEncoder().encode(json).length > 4096) {
+    const bytes = (s) => new TextEncoder().encode(s).length;
+    let json = JSON.stringify(order);
+    // Подписанные данные запуска: бот проверит подпись. С кнопки клавиатуры Telegram их не передаёт
+    if (inTg && tg.initData) {
+      const signed = JSON.stringify({ ...order, initData: tg.initData });
+      if (bytes(signed) <= 4096) json = signed;
+    }
+    if (bytes(json) > 4096) {
       haptic.notify("error");
       toast("Заказ слишком большой для одного сообщения - разделите его на два");
       return;
