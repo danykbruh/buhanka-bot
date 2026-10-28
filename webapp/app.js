@@ -559,26 +559,9 @@
   }
 
   // ---------- Поиск: отдельный экран, ищет по всем категориям ----------
-  // Ищем по названию, составу и тегам (свои теги позиции, подгруппа, категория) без учёта регистра и ё,
-  // с синонимами из menu.json ("кофе" находит латте, "сладкое" находит пончики)
-  const SYNONYMS = Object.entries(MENU.searchSynonyms || {}).map(([key, values]) => [norm(key), values.map(norm)]);
-  const groupTitleOf = new Map();
-  categories.forEach((c) => (c.groups || []).forEach((g) => g.items.forEach((id) => groupTitleOf.set(id, g.title))));
-  const haystack = new Map(items.map((it) => {
-    const cat = categories.find((c) => c.id === it.cat);
-    const parts = [it.title, it.composition, ...(it.tags || []), groupTitleOf.get(it.id), cat && cat.title, cat && cat.tab];
-    return [it.id, norm(parts.filter(Boolean).join(" "))];
-  }));
-
-  // Слово, оно же без окончания ("пончики" -> "пончик") и его синонимы
-  function variantsOf(token) {
-    const out = new Set([token]);
-    if (token.length >= 5) { out.add(token.slice(0, -1)); out.add(token.slice(0, -2)); }
-    if (token.length >= 3) {
-      for (const [key, values] of SYNONYMS) if (key.startsWith(token) || token.startsWith(key)) values.forEach((v) => out.add(v));
-    }
-    return [...out];
-  }
+  // Логика в search.js: название, теги, подгруппа, категория и состав; опечатки, латиница ("latte", "kruassan"),
+  // окончания и синонимы из menu.json ("кофе" находит латте). Порядок: точное > префикс > синоним > опечатка
+  const menuSearch = window.BuhankaSearch.createMenuSearch(MENU);
 
   // Для комбо аллергены всех возможных составляющих: фильтр "Без глютена" не пропустит набор с выпечкой
   function allergensAll(item) {
@@ -617,14 +600,9 @@
   const activeFilters = new Set();
   const ICON_CLOCK = '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></g></svg>';
 
-  // Совпадения в названии жирным. norm не меняет длину строки, поэтому позиции совпадают с исходным текстом
-  function highlight(title, tokens) {
-    const n = norm(title);
-    const ranges = [];
-    for (const t of tokens) for (const v of variantsOf(t)) {
-      for (let i = n.indexOf(v); i !== -1 && v; i = n.indexOf(v, i + 1)) ranges.push([i, i + v.length]);
-    }
-    ranges.sort((a, b) => a[0] - b[0]);
+  // Совпадения в названии жирным: начало слова при префиксе, слово целиком при синониме и опечатке
+  function highlight(title, query) {
+    const ranges = query ? menuSearch.highlightRanges(title, query) : [];
     let html = "", pos = 0;
     for (const [a, b] of ranges) {
       if (b <= pos) continue;
@@ -635,7 +613,7 @@
     return html + esc(title.slice(pos));
   }
 
-  function resultHtml(item, tokens) {
+  function resultHtml(item, query) {
     const { kcal } = statsOf(item, defaultOpts(item));
     const meta = [cardLine(item), kcal ? `${kcal} ккал` : ""].filter(Boolean).join(" · ");
     const price = hasPriceRange(item) ? `<small>от</small> ${money(minPrice(item))}` : money(item.price);
@@ -643,7 +621,7 @@
     return `<article class="result" data-id="${item.id}" tabindex="0" aria-label="${esc(item.title)}, ${esc(money(minPrice(item)))}">
       <img class="result__img" src="${imgSrc(item.id)}" alt="" loading="lazy" decoding="async" width="64" height="64"${imgPosAttr(item)}>
       <div class="result__text">
-        <div class="result__title">${highlight(item.title, tokens)}</div>
+        <div class="result__title">${highlight(item.title, query)}</div>
         ${meta ? `<div class="result__meta">${esc(meta)}</div>` : ""}
         <div class="result__price">${price}</div>
       </div>
@@ -658,9 +636,9 @@
   }
 
   function renderSearch() {
-    const tokens = norm(searchQuery.trim()).split(/\s+/).filter(Boolean);
+    const query = window.BuhankaSearch.normalize(searchQuery);
     const filters = SEARCH_FILTERS.filter((f) => activeFilters.has(f.id));
-    if (!tokens.length && !filters.length) {
+    if (!query && !filters.length) {
       // До ввода: недавние запросы и популярное
       els.searchBody.innerHTML = `
         ${recent.length ? `<section class="search-block">
@@ -673,14 +651,11 @@
         </section>`;
       return;
     }
-    const variants = tokens.map(variantsOf);
-    const found = items.filter((it) => {
-      const h = haystack.get(it.id);
-      return variants.every((vs) => vs.some((v) => h.includes(v))) && filters.every((f) => f.test(it));
-    });
+    // Только фильтры - позиции в порядке меню, с запросом - по релевантности
+    const found = (query ? menuSearch.search(query).map((r) => r.item) : items).filter((it) => filters.every((f) => f.test(it)));
     if (found.length) {
       els.searchBody.innerHTML = `<p class="list-count search-count">Найдено: ${itemsCount(found.length)}</p>
-        <div class="results">${found.map((it) => resultHtml(it, tokens)).join("")}</div>`;
+        <div class="results">${found.map((it) => resultHtml(it, query)).join("")}</div>`;
     } else {
       const popular = (MENU.popular || []).map((id) => byId.get(id)).filter(Boolean).slice(0, 4);
       els.searchBody.innerHTML = `<div class="empty empty--search">
@@ -689,7 +664,7 @@
           <p class="empty__text">${filters.length ? "Попробуйте другое слово или уберите фильтры" : "Попробуйте другое слово, например «круассан» или «чай»"}</p>
         </div>
         ${popular.length ? `<section class="search-block"><h3 class="search-sub">Популярное</h3>
-          <div class="results">${popular.map((it) => resultHtml(it, [])).join("")}</div></section>` : ""}`;
+          <div class="results">${popular.map((it) => resultHtml(it, "")).join("")}</div></section>` : ""}`;
     }
     markLoadedImages(els.searchBody);
   }
