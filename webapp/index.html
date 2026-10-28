@@ -6,14 +6,14 @@
   <meta name="format-detection" content="telephone=no">
   <meta name="color-scheme" content="light dark">
   <title>Буханка - меню</title>
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 100 100%27%3E%3Ctext y=%27.9em%27 font-size=%2790%27%3E%F0%9F%A5%90%3C/text%3E%3C/svg%3E">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 32 32%27%3E%3Crect width=%2732%27 height=%2732%27 rx=%278%27 fill=%27%23FED36B%27/%3E%3Cpath d=%27M8 15c0-4 3.6-7 8-7s8 3 8 7c0 1.4-.7 2.4-1.5 3v5a1.5 1.5 0 0 1-1.5 1.5H11a1.5 1.5 0 0 1-1.5-1.5v-5C8.7 17.4 8 16.4 8 15Z%27 fill=%27none%27 stroke=%27%23242424%27 stroke-width=%272%27/%3E%3C/svg%3E">
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <!-- Шрифты не блокируют запуск: если Google Fonts тормозит, меню откроется с системным шрифтом -->
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Oswald:wght@500;600&display=swap" media="print" onload="this.media='all'">
   <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Oswald:wght@500;600&display=swap"></noscript>
-  <link rel="stylesheet" href="style.css?v=20261027-5">
+  <link rel="stylesheet" href="style.css?v=20261028-1">
 </head>
 <body>
   <div id="app">
@@ -25,35 +25,17 @@
             <h1 class="hero__title">Буханка</h1>
             <p class="hero__sub">Свежая выпечка к вашему времени</p>
           </div>
-          <div class="hero__actions">
-            <button class="hero__cart" id="headerOrders" type="button" aria-label="Мои заказы">
-              <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" d="M6 3.5h12a1 1 0 0 1 1 1V21l-2.5-1.6L14 21l-2-1.6L10 21l-2.5-1.6L5 21V4.5a1 1 0 0 1 1-1ZM9 8.5h6M9 12h6M9 15.5h3.5"/></svg>
-            </button>
-            <button class="hero__cart" id="headerCart" type="button" aria-label="Корзина">
-              <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" d="M5 8h14l-1.2 11.1a2 2 0 0 1-2 1.9H8.2a2 2 0 0 1-2-1.9L5 8Zm4 0V7a3 3 0 0 1 6 0v1"/></svg>
-              <span class="hero__badge" id="cartBadge" hidden>0</span>
-            </button>
-          </div>
         </div>
         <div class="promos" id="promos" aria-label="Акции" hidden></div>
-        <label class="search">
+        <button class="search search--button" id="searchOpen" type="button" aria-label="Поиск по меню">
           <svg class="search__icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="m20 20-4.2-4.2M18 11a7 7 0 1 1-14 0 7 7 0 0 1 14 0Z"/></svg>
-          <input id="search" type="search" placeholder="Круассан, латте, комбо..." autocomplete="off" enterkeyhint="search" aria-label="Поиск по меню">
-          <button class="search__clear" id="searchClear" type="button" aria-label="Очистить поиск" hidden>
-            <svg viewBox="0 0 24 24" width="16" height="16"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M7 7l10 10M17 7 7 17"/></svg>
-          </button>
-        </label>
+          <span class="search__placeholder">Круассан, латте, комбо...</span>
+        </button>
       </header>
 
       <nav class="tabs" id="tabs" aria-label="Категории"></nav>
 
       <div id="sections"></div>
-
-      <div class="empty" id="searchEmpty" hidden>
-        <div class="icon-circle" aria-hidden="true"><svg viewBox="0 0 56 56" width="56" height="56"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="25" cy="25" r="12"/><path d="m34 34 9 9"/></g></svg></div>
-        <p class="empty__title">Ничего не нашлось</p>
-        <p class="empty__text">Попробуйте другое слово, например "круассан" или "чай".</p>
-      </div>
 
       <footer class="disclaimer">Концепт. Не является официальным сервисом пекарни Буханка</footer>
     </main>
@@ -61,6 +43,24 @@
     <!-- Экран товара -->
     <section class="screen screen--product" id="productScreen" role="dialog" aria-modal="true" aria-labelledby="productTitle" hidden>
       <div class="screen__scroll" id="productBody"></div>
+      <div class="product__bar" id="productBar"></div>
+    </section>
+
+    <!-- Поиск -->
+    <section class="screen screen--tab" id="searchScreen" role="dialog" aria-modal="true" aria-label="Поиск" hidden>
+      <div class="screen__scroll">
+        <header class="search-head">
+          <button class="nav-back" type="button" data-back aria-label="Назад"><svg viewBox="0 0 24 24" width="22" height="22"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" d="M15 5l-7 7 7 7"/></svg></button>
+          <label class="search search--lg">
+            <svg class="search__icon" viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" d="m20 20-4.2-4.2M18 11a7 7 0 1 1-14 0 7 7 0 0 1 14 0Z"/></svg>
+            <input id="searchInput" type="search" placeholder="Круассан, латте, комбо..." autocomplete="off" enterkeyhint="search" aria-label="Поиск по меню">
+            <button class="search__clear" id="searchClear" type="button" aria-label="Очистить поиск" hidden>
+              <svg viewBox="0 0 24 24" width="16" height="16"><path fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" d="M7 7l10 10M17 7 7 17"/></svg>
+            </button>
+          </label>
+        </header>
+        <div id="searchBody"></div>
+      </div>
     </section>
 
     <!-- Корзина -->
@@ -154,7 +154,7 @@
     </section>
 
     <!-- Мои заказы -->
-    <section class="screen" id="ordersScreen" role="dialog" aria-modal="true" aria-labelledby="ordersTitle" hidden>
+    <section class="screen screen--tab" id="ordersScreen" role="dialog" aria-modal="true" aria-labelledby="ordersTitle" hidden>
       <div class="screen__scroll">
         <header class="screen__head">
           <button class="nav-back" type="button" data-back aria-label="Назад">
@@ -167,6 +167,14 @@
       </div>
     </section>
 
+    <!-- Нижняя панель: Меню, Поиск, Заказы, Корзина -->
+    <nav class="tabbar" id="tabbar" aria-label="Разделы">
+      <button class="tabbar__item" type="button" data-nav="menu"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M4 6h16M4 12h16M4 18h10"/></svg><span>Меню</span></button>
+      <button class="tabbar__item" type="button" data-nav="search"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="m20 20-4.2-4.2M18 11a7 7 0 1 1-14 0 7 7 0 0 1 14 0Z"/></svg><span>Поиск</span></button>
+      <button class="tabbar__item" type="button" data-nav="orders"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M6 3.5h12a1 1 0 0 1 1 1V21l-2.5-1.6L14 21l-2-1.6L10 21l-2.5-1.6L5 21V4.5a1 1 0 0 1 1-1ZM9 8.5h6M9 12h6M9 15.5h3.5"/></svg><span>Заказы</span></button>
+      <button class="tabbar__item" type="button" data-nav="cart"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" d="M5 8h14l-1.2 11.1a2 2 0 0 1-2 1.9H8.2a2 2 0 0 1-2-1.9L5 8Zm4 0V7a3 3 0 0 1 6 0v1"/></svg><span>Корзина</span><b class="tabbar__badge" id="cartBadge" hidden>0</b></button>
+    </nav>
+
     <!-- Запасная кнопка вне Telegram (в Telegram её роль играет MainButton) -->
     <div class="fallback-bar" id="fallbackBar" hidden>
       <button class="fallback-bar__btn" id="fallbackBtn" type="button"></button>
@@ -175,7 +183,7 @@
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
   </div>
 
-  <script src="bakeries.js?v=20261027-5"></script>
-  <script src="app.js?v=20261027-5"></script>
+  <script src="bakeries.js?v=20261028-1"></script>
+  <script src="app.js?v=20261028-1"></script>
 </body>
 </html>

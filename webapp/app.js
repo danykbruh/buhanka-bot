@@ -248,11 +248,15 @@
   const els = {
     tabs: $("#tabs"),
     sections: $("#sections"),
-    search: $("#search"),
+    searchOpen: $("#searchOpen"),
+    searchScreen: $("#searchScreen"),
+    searchInput: $("#searchInput"),
     searchClear: $("#searchClear"),
-    searchEmpty: $("#searchEmpty"),
+    searchBody: $("#searchBody"),
+    tabbar: $("#tabbar"),
     product: $("#productScreen"),
     productBody: $("#productBody"),
+    productBar: $("#productBar"),
     cart: $("#cartScreen"),
     cartBody: $("#cartBody"),
     cartClear: $("#cartClear"),
@@ -265,8 +269,6 @@
     fallbackBar: $("#fallbackBar"),
     fallbackBtn: $("#fallbackBtn"),
     toast: $("#toast"),
-    headerCart: $("#headerCart"),
-    headerOrders: $("#headerOrders"),
     cartBadge: $("#cartBadge"),
     orders: $("#ordersScreen"),
     ordersBody: $("#ordersBody"),
@@ -280,8 +282,6 @@
     bakeryList: $("#bakeryList"),
   };
 
-  let query = "";
-
   // ---------- Избранное ----------
   const KEY_FAV = "buhanka_fav";
   const FAV_CAT = { id: "fav", title: "Избранное", tab: "Избранное" };
@@ -294,7 +294,7 @@
   let favorites = new Set(parseIds(store.get(KEY_FAV)));
   const isFav = (id) => favorites.has(id);
   // Вкладка "Избранное" первой и только если в избранном что-то есть
-  const tabCats = () => (favorites.size && !query ? [FAV_CAT, ...categories] : categories);
+  const tabCats = () => (favorites.size ? [FAV_CAT, ...categories] : categories);
 
   const heartIcon = (on) => `<svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path fill="${on ? "currentColor" : "none"}" stroke="currentColor" stroke-width="2" stroke-linejoin="round" d="M12 20.3s-7.4-4.5-9.1-9.2C1.8 8 3.9 4.6 7.3 4.6c2 0 3.6 1.1 4.7 2.7 1.1-1.6 2.7-2.7 4.7-2.7 3.4 0 5.5 3.4 4.4 6.5-1.7 4.7-9.1 9.2-9.1 9.2Z"/></svg>`;
   const favLabel = (item, on) => `${on ? "Убрать из избранного" : "В избранное"}: ${item.title}`;
@@ -324,7 +324,6 @@
       b.setAttribute("aria-label", favLabel(byId.get(b.dataset.fav), on));
       b.innerHTML = heartIcon(on);
     });
-    if (query) return;
     if (activeCat === "fav" && !favorites.size) {
       switchTab(categories[0].id); // избранное опустело - вкладка исчезает
       return;
@@ -430,18 +429,7 @@
   }
 
   function renderSections() {
-    const q = norm(query.trim());
-    if (q) {
-      // Поиск идёт по всем категориям, вкладки на это время скрыты
-      const found = items.filter((it) => norm(`${it.title} ${it.desc} ${it.composition || ""} ${it.short || ""}`).includes(q));
-      els.tabs.hidden = true;
-      els.searchEmpty.hidden = found.length > 0;
-      els.sections.innerHTML = found.length
-        ? `<div class="section"><p class="list-count">Найдено: ${itemsCount(found.length)}</p><div class="grid">${found.map(cardHtml).join("")}</div></div>`
-        : "";
-    } else {
-      els.tabs.hidden = false;
-      els.searchEmpty.hidden = true;
+    {
       renderTabs();
       const cat = activeCat === "fav" ? FAV_CAT : categories.find((c) => c.id === activeCat);
       const list = catItems(activeCat);
@@ -494,7 +482,7 @@
   // Свайп влево и вправо по списку переключает соседнюю вкладку
   let swipe = null;
   els.sections.addEventListener("touchstart", (e) => {
-    if (e.touches.length !== 1 || query) { swipe = null; return; }
+    if (e.touches.length !== 1) { swipe = null; return; }
     swipe = { x: e.touches[0].clientX, y: e.touches[0].clientY, t: Date.now() };
   }, { passive: true });
   els.sections.addEventListener("touchend", (e) => {
@@ -510,7 +498,7 @@
   }, { passive: true });
 
   function refreshCards() {
-    $$(".card", els.sections).forEach((card) => {
+    $$(".card").forEach((card) => {
       const ctrl = $(".card__ctrl", card);
       const qty = itemQty(card.dataset.id);
       if (String(qty) === ctrl.dataset.qty) return;
@@ -537,7 +525,7 @@
     $$("img", root).forEach((img) => { if (img.complete && img.naturalWidth) img.classList.add("is-loaded"); });
   }
 
-  els.sections.addEventListener("click", (e) => {
+  function onCardClick(e) {
     const card = e.target.closest(".card");
     if (!card) return;
     const item = byId.get(card.dataset.id);
@@ -555,28 +543,60 @@
       if (last) changeLine(last.key, -1);
       haptic.impact("light");
     }
-  });
+  }
 
-  els.sections.addEventListener("keydown", (e) => {
+  function onCardKey(e) {
     if ((e.key === "Enter" || e.key === " ") && e.target.classList.contains("card")) {
       e.preventDefault();
       openProduct(e.target.dataset.id);
     }
-  });
+  }
 
-  // ---------- Поиск ----------
-  els.search.addEventListener("input", () => {
-    query = els.search.value;
-    els.searchClear.hidden = !query;
-    renderSections();
+  for (const list of [els.sections, els.searchBody]) {
+    list.addEventListener("click", onCardClick);
+    list.addEventListener("keydown", onCardKey);
+  }
+
+  // ---------- Поиск: отдельный экран, ищет по всем категориям ----------
+  let searchQuery = "";
+
+  function renderSearch() {
+    const q = norm(searchQuery.trim());
+    if (!q) {
+      els.searchBody.innerHTML = `<p class="search-hint">Введите название или состав: круассан, латте, лосось</p>`;
+      return;
+    }
+    const found = items.filter((it) => norm(`${it.title} ${it.desc} ${it.composition || ""} ${it.short || ""}`).includes(q));
+    els.searchBody.innerHTML = found.length
+      ? `<div class="section"><p class="list-count">Найдено: ${itemsCount(found.length)}</p><div class="grid">${found.map(cardHtml).join("")}</div></div>`
+      : `<div class="empty">
+          <div class="icon-circle" aria-hidden="true"><svg viewBox="0 0 56 56" width="56" height="56"><g fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><circle cx="25" cy="25" r="12"/><path d="m34 34 9 9"/></g></svg></div>
+          <p class="empty__title">Ничего не нашлось</p>
+          <p class="empty__text">Попробуйте другое слово, например "круассан" или "чай"</p>
+        </div>`;
+    markLoadedImages(els.searchBody);
+  }
+
+  function openSearch() {
+    renderSearch();
+    navigate("search");
+    // Фокус сразу, пока жест гостя ещё "свежий": так на телефоне откроется клавиатура
+    els.searchInput.focus({ preventScroll: true });
+  }
+
+  els.searchOpen.addEventListener("click", openSearch);
+  els.searchInput.addEventListener("input", () => {
+    searchQuery = els.searchInput.value;
+    els.searchClear.hidden = !searchQuery;
+    renderSearch();
   });
-  els.search.addEventListener("keydown", (e) => { if (e.key === "Enter") els.search.blur(); });
+  els.searchInput.addEventListener("keydown", (e) => { if (e.key === "Enter") els.searchInput.blur(); });
   els.searchClear.addEventListener("click", () => {
-    els.search.value = "";
-    query = "";
+    els.searchInput.value = "";
+    searchQuery = "";
     els.searchClear.hidden = true;
-    renderSections();
-    els.search.focus();
+    renderSearch();
+    els.searchInput.focus();
   });
 
   // ---------- Липкие вкладки: тень, когда прилипли ----------
@@ -591,10 +611,12 @@
   }, { passive: true });
 
   // ---------- Навигация между экранами ----------
-  const screens = { product: els.product, cart: els.cart, checkout: els.checkout, bakery: els.bakery, orders: els.orders };
+  const screens = { product: els.product, cart: els.cart, checkout: els.checkout, bakery: els.bakery, orders: els.orders, search: els.searchScreen };
   const stack = [];
   const top = () => stack[stack.length - 1] || "catalog";
+  const TRANSITION_MS = 200;
 
+  // Каталог остаётся под экранами и не перерисовывается, поэтому его прокрутка сохраняется при возврате
   function open(name) {
     const el = screens[name];
     if (stack.includes(name)) return;
@@ -605,24 +627,79 @@
     const scroller = $(".screen__scroll", el);
     if (scroller) scroller.scrollTop = 0;
     document.body.classList.add("is-locked");
-    syncBackButton();
-    syncMainButton();
+    syncChrome();
+  }
+
+  function hideScreen(name, animate = true) {
+    const el = screens[name];
+    if (document.activeElement && el.contains(document.activeElement)) document.activeElement.blur();
+    if (!animate) { el.hidden = true; el.classList.remove("is-leaving"); return; }
+    el.classList.add("is-leaving");
+    setTimeout(() => {
+      if (!stack.includes(name)) { el.hidden = true; el.classList.remove("is-leaving"); }
+    }, TRANSITION_MS - 10);
   }
 
   function back() {
     const name = stack.pop();
     if (!name) return;
-    const el = screens[name];
-    if (document.activeElement && el.contains(document.activeElement)) document.activeElement.blur();
-    el.classList.add("is-leaving");
-    setTimeout(() => {
-      if (!stack.includes(name)) { el.hidden = true; el.classList.remove("is-leaving"); }
-    }, 190);
+    hideScreen(name);
     if (!stack.length) document.body.classList.remove("is-locked");
     if (top() === "cart") renderCart();
+    syncChrome();
+  }
+
+  // Переход из нижней панели: Поиск и Заказы сменяют друг друга, а не копятся в стеке
+  const TAB_SCREENS = ["search", "orders"];
+  function navigate(name) {
+    if (top() === name) return;
+    if (TAB_SCREENS.includes(top()) && TAB_SCREENS.includes(name)) {
+      const prev = stack.pop();
+      open(name);
+      hideScreen(prev, false);
+      return;
+    }
+    open(name);
+  }
+
+  // Всё, что зависит от текущего экрана: BackButton, MainButton, нижняя панель
+  function syncChrome() {
     syncBackButton();
     syncMainButton();
+    syncTabbar();
   }
+
+  const TABBAR_ON = { catalog: "menu", search: "search", orders: "orders" };
+  function syncTabbar() {
+    const active = TABBAR_ON[top()];
+    // На товаре своя нижняя панель, в корзине и оформлении MainButton: там нижней панели нет
+    els.tabbar.hidden = !active;
+    document.body.classList.toggle("has-tabbar", !!active);
+    $$(".tabbar__item", els.tabbar).forEach((b) => {
+      const on = b.dataset.nav === active;
+      b.classList.toggle("is-active", on);
+      if (on) b.setAttribute("aria-current", "page");
+      else b.removeAttribute("aria-current");
+    });
+  }
+
+  els.tabbar.addEventListener("click", (e) => {
+    const btn = e.target.closest("[data-nav]");
+    if (!btn) return;
+    const target = btn.dataset.nav;
+    haptic.select();
+    if (target === "menu") {
+      if (stack.length) closeAll();
+      else window.scrollTo({ top: 0, behavior: "smooth" });
+    } else if (target === "search") {
+      if (top() === "search") els.searchInput.focus();
+      else openSearch();
+    } else if (target === "orders") {
+      if (top() !== "orders") { renderOrders(); navigate("orders"); }
+    } else if (target === "cart") {
+      openCart();
+    }
+  });
 
   function closeAll() {
     while (stack.length) back();
@@ -675,9 +752,6 @@
   function syncMainButton() {
     const total = payableTotal();
     switch (top()) {
-      case "product":
-        setMain(`Добавить - ${money(productTotal())}`, addFromProduct);
-        break;
       case "cart":
         if (cart.length) setMain(`Оформить - ${money(total)}`, () => { haptic.impact("medium"); openCheckout(); });
         else setMain("");
@@ -687,27 +761,22 @@
         if (cart.length) setMain(`Отправить заказ - ${money(total)}`, submitOrder, !!selectedBakery);
         else setMain("");
         break;
-      case "bakery":
-      case "orders":
-        // На этих экранах своя основная кнопка не нужна: выбор и "Повторить" внутри списка
-        setMain("");
-        break;
       default:
-        if (cart.length) setMain(`Корзина (${cartCount()}) - ${money(total)}`, () => { haptic.impact("medium"); openCart(); });
-        else setMain("");
+        // Каталог, поиск, заказы, товар, выбор пекарни: MainButton скрыт, чтобы не перекрывал нижнюю панель
+        setMain("");
     }
   }
 
   els.fallbackBtn.addEventListener("click", runMain);
 
-  // ---------- Корзина в шапке ----------
+  // ---------- Бейдж корзины в нижней панели ----------
   let badgeCount = cartCount();
 
   function updateCartBadge() {
     const count = cartCount();
     els.cartBadge.hidden = !count;
     els.cartBadge.textContent = count > 99 ? "99+" : count;
-    els.headerCart.setAttribute("aria-label", count ? `Корзина, ${count} шт` : "Корзина");
+    $('[data-nav="cart"]', els.tabbar).setAttribute("aria-label", count ? `Корзина, ${count} шт` : "Корзина");
     if (count > badgeCount) {
       els.cartBadge.classList.remove("is-bumped");
       void els.cartBadge.offsetWidth; // перезапуск анимации
@@ -715,11 +784,6 @@
     }
     badgeCount = count;
   }
-
-  els.headerCart.addEventListener("click", () => {
-    haptic.impact("light");
-    openCart();
-  });
 
   // ---------- Экран товара ----------
   let product = null; // { item, opts, qty }
@@ -779,23 +843,19 @@
           <p class="product__composition">${esc(item.composition)}</p>
           <div id="productAllergens"></div>
         </div>` : ""}
-        <div class="product__qty">
-          <div>
-            <div class="product__total-label">Сумма</div>
-            <div class="product__total" id="productTotal">${money(productTotal())}</div>
-          </div>
-          <div class="stepper stepper--lg stepper--soft">
-            <button type="button" data-step="-1" aria-label="Меньше">${ICON.minus}</button>
-            <span class="stepper__val" id="productQty">${product.qty}</span>
-            <button type="button" data-step="1" aria-label="Больше">${ICON.plus}</button>
-          </div>
-        </div>
       </div>
       ${pairs.length ? `<div class="pairing">
         <h3 class="product__block-title pairing__title">С этим берут</h3>
         <div class="pairing__list">${pairs.map(pairHtml).join("")}</div>
       </div>` : ""}
       <p class="product__note">Состав и КБЖУ ориентировочные</p>`;
+    els.productBar.innerHTML = `
+      <div class="stepper stepper--lg stepper--soft">
+        <button type="button" data-step="-1" aria-label="Меньше">${ICON.minus}</button>
+        <span class="stepper__val" id="productQty">${product.qty}</span>
+        <button type="button" data-step="1" aria-label="Больше">${ICON.plus}</button>
+      </div>
+      <button type="button" class="product__add" id="productAdd" data-add></button>`;
     renderProductDetails();
   }
 
@@ -817,6 +877,7 @@
     const { item, opts } = product;
     const { amount, kcal } = statsOf(item, opts);
     const inCart = itemQty(item.id);
+    $("#productAdd").textContent = `Добавить - ${money(productTotal())}`;
     const stats = [amount, kcal != null ? `${kcal} ккал` : ""].filter(Boolean).join(" · ");
     $("#productStats").innerHTML = `${esc(stats)}${inCart ? `<span class="product__incart">в корзине: ${inCart}</span>` : ""}`;
     $("#productStats").hidden = !stats && !inCart;
@@ -845,11 +906,19 @@
   }
 
   function updateProductTotals() {
-    $("#productTotal").textContent = money(productTotal());
     $("#productQty").textContent = product.qty;
     renderProductDetails();
-    syncMainButton();
   }
+
+  els.productBar.addEventListener("click", (e) => {
+    if (!product) return;
+    if (e.target.closest("[data-add]")) { addFromProduct(); return; }
+    const step = e.target.closest("[data-step]");
+    if (step) {
+      const next = Math.max(1, Math.min(MAX_QTY, product.qty + Number(step.dataset.step)));
+      if (next !== product.qty) { product.qty = next; haptic.impact("light"); updateProductTotals(); }
+    }
+  });
 
   els.productBody.addEventListener("click", (e) => {
     if (!product) return;
@@ -861,7 +930,6 @@
         product = { item, opts: defaultOpts(item), qty: 1 };
         renderProduct();
         els.productBody.scrollTo({ top: 0, behavior: "smooth" });
-        syncMainButton();
         return;
       }
       if (!addToCart(item.id, defaultOpts(item))) return;
@@ -1668,10 +1736,7 @@
     $("[data-pair-qty]", pair).innerHTML = pairBadge(item);
     toast(`${item.title} - в корзине`);
   });
-  els.headerOrders.addEventListener("click", () => {
-    haptic.impact("light");
-    openOrders();
-  });
+
 
   // Избранное, историю и пекарню с другого устройства подтягиваем из облака после первого рендера
   async function syncFromCloud() {
@@ -1741,7 +1806,7 @@
   const reduceMotion = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
   if (!reduceMotion) {
     setInterval(() => {
-      if (banners.length < 2 || document.hidden || stack.length || infoEl || Date.now() < bannerPausedUntil || query) return;
+      if (banners.length < 2 || document.hidden || stack.length || infoEl || Date.now() < bannerPausedUntil) return;
       const track = $(".promos__track", els.promos);
       if (!track || track.getBoundingClientRect().bottom < 0) return;
       const next = (bannerIndex + 1) % banners.length;
@@ -1765,7 +1830,6 @@
       else if (cartIssue) toast(p.error, 3500);
       else toast(`Промокод ${p.code} применён: -${money(p.discount || 0)}`, 3000);
     } else if (action.type === "tab" && categories.some((c) => c.id === action.cat)) {
-      if (query) { els.search.value = ""; query = ""; els.searchClear.hidden = true; renderSections(); }
       switchTab(action.cat);
       setTimeout(() => scrollToListTop(true), 180); // показать список под вкладками
     } else if (action.type === "item" && byId.has(action.id)) {
@@ -1838,6 +1902,8 @@
     els.comment.maxLength = LIMITS.commentMax;
     renderTabs();
     renderSections();
+    syncChrome();
+    updateCartBadge();
 
     if (inTg) {
       tg.ready();
